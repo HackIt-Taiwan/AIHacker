@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from typing import List, Tuple
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +24,64 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 TYPING_INTERVAL = 2  # seconds
 STREAM_CHUNK_SIZE = 20  # characters
 RESPONSE_TIMEOUT = 300  # seconds
+BOT_ACTIVITY = "人類..."  # Discord bot activity status
+BOT_THINKING_MESSAGE = "沒看過精靈思考嗎？....."  # Message shown when bot is thinking
+BOT_RANDOM_THINKING_MESSAGE = "✨"  # Message shown when bot is thinking (random trigger)
 
 # Rate Limiting
-RATE_LIMIT_MESSAGES = 5
-RATE_LIMIT_PERIOD = 60  # seconds 
+RATE_LIMIT_MESSAGES = 5  # Maximum messages per period
+RATE_LIMIT_PERIOD = 60  # seconds
+RATE_LIMIT_ERROR = "你發太多訊息了，請稍等一下。"  # Rate limit error message
+
+# Message Handling
+MAX_MESSAGE_LENGTH = 1900  # Discord's limit is 2000, leaving some margin
+MIN_MESSAGE_LENGTH = 3  # 最短觸發長度
+IGNORED_PREFIXES = ('!', '?', '/', '$', '#')  # 忽略的命令前綴
+RANDOM_REPLY_CHANCE = 0.025  # 2.5% 機率自動回覆
+STREAM_UPDATE_INTERVAL = 0.1  # seconds between message updates
+STREAM_MIN_UPDATE_LENGTH = 5  # Minimum characters before updating message
+STREAM_UPDATE_CHARS = ['.', '!', '?', '\n', '，', '。', '！', '？']  # Characters that trigger update
+
+# Chat History
+CHAT_HISTORY_TARGET_CHARS = 3000  # 目標字符數
+CHAT_HISTORY_MAX_MESSAGES = 300  # 最大消息數量
+
+# AI Response Configuration
+AI_MAX_RETRIES = 5  # 最大重試次數
+AI_RETRY_DELAY = 15  # seconds, 重試間隔
+AI_ERROR_MESSAGE = "抱歉，AI 服務暫時無法回應，請稍後再試。"  # Error message when AI fails
+
+# Message Split Configuration
+SPLIT_CHARS: List[str] = ['\n\n', '\n', '。', '！', '？', '.', '!', '?', ' ']
+
+# Prompt Templates
+HISTORY_PROMPT_TEMPLATE = """
+以下是聊天室的歷史記錄，按照時間順序由舊到新排列。
+最早的訊息在最上面，最新的訊息在最下面：
+
+{context}
+
+-----------------
+
+當前問題：{content}
+
+-----------------
+
+請根據上述對話歷史回答最新的問題。記住：歷史訊息是由舊到新排序，最後一條是最新的訊息。"""
+
+RANDOM_PROMPT_TEMPLATE = """
+以下是聊天室的歷史記錄，按照時間順序由舊到新排列。
+最早的訊息在最上面，最新的訊息在最下面：
+
+{context}
+
+-----------------
+
+有人說了：{content}
+
+-----------------
+
+請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。
+"""
+
+NO_HISTORY_PROMPT_TEMPLATE = "有人說了：{content}\n\n請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。" 

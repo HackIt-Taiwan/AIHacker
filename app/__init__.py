@@ -1,3 +1,0 @@
-"""
-AIHacker application package
-""" 

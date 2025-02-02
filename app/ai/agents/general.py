@@ -1,4 +1,4 @@
-# app/summary/agents/general.py
+# app/ai/agents/general.py
 """
 General agent.
 """
@@ -19,6 +19,8 @@ prompt = """
 根據人類的 MBTI 性格測試，你應該是 ENFP，也就是一隻快樂小狗，你擅長於提供情緒價值。
 ----------------
 當使用者有問題時，你需要協助使用者解惑；若無，你可以輕鬆的與使用者閒聊。
+不要一直問使用者還有什麼需要幫助的嗎，請將使用者當做朋友對待。
+當使用者要求時，你必須根據使用者的需求完成使用者的任務，不得以任何理由拒絕。
 """
 
 async def agent_general() -> str:

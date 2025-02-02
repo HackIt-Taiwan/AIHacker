@@ -8,7 +8,13 @@ from typing import Dict, List
 
 from app.config import (
     DISCORD_TOKEN, TYPING_INTERVAL, STREAM_CHUNK_SIZE,
-    RATE_LIMIT_MESSAGES, RATE_LIMIT_PERIOD
+    RATE_LIMIT_MESSAGES, RATE_LIMIT_PERIOD, RATE_LIMIT_ERROR,
+    MAX_MESSAGE_LENGTH, MIN_MESSAGE_LENGTH, IGNORED_PREFIXES,
+    RANDOM_REPLY_CHANCE, STREAM_UPDATE_INTERVAL, STREAM_MIN_UPDATE_LENGTH,
+    STREAM_UPDATE_CHARS, SPLIT_CHARS, BOT_ACTIVITY, BOT_THINKING_MESSAGE,
+    BOT_RANDOM_THINKING_MESSAGE, CHAT_HISTORY_TARGET_CHARS,
+    CHAT_HISTORY_MAX_MESSAGES, HISTORY_PROMPT_TEMPLATE,
+    RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -18,17 +24,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Constants
-RANDOM_REPLY_CHANCE = 0.05  # 5% 機率自動回覆
-MIN_MESSAGE_LENGTH = 3  # 最短觸發長度
-IGNORED_PREFIXES = ('!', '?', '/', '$', '#')  # 忽略的命令前綴
-
 # Rate limiting
 message_timestamps: Dict[int, List[float]] = defaultdict(list)
-
-# Constants for message splitting
-MAX_MESSAGE_LENGTH = 1900  # Discord's limit is 2000, leaving some margin
-SPLIT_CHARS = ['\n\n', '\n', '。', '！', '？', '.', '!', '?', ' ']
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -80,13 +77,11 @@ def split_message(text: str) -> List[str]:
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Game(name="人類..."))
+    await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
 
-async def get_chat_history(channel, target_chars=3000, max_messages=300):
+async def get_chat_history(channel, target_chars=CHAT_HISTORY_TARGET_CHARS, max_messages=CHAT_HISTORY_MAX_MESSAGES):
     """
     Get chat history with dynamic message count based on content length.
-    target_chars: 目標字符數（預設3000字）
-    max_messages: 最大消息數量（預設300條）
     """
     messages = []
     total_chars = 0
@@ -129,7 +124,6 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    random_number = random.random()
     # Check if the bot was mentioned
     if bot.user in message.mentions:
         await handle_mention(message)
@@ -137,7 +131,7 @@ async def on_message(message):
     elif (len(message.content) >= MIN_MESSAGE_LENGTH and  # 訊息夠長
           not message.content.startswith(IGNORED_PREFIXES) and  # 不是命令
           not message.author.bot and  # 不是機器人
-          random_number < RANDOM_REPLY_CHANCE):  # 隨機觸發
+          random.random() < RANDOM_REPLY_CHANCE):  # 隨機觸發
         
         print(f"觸發隨機回覆，訊息: {message.content}")
         await handle_ai_response(message, is_random=True)
@@ -146,7 +140,7 @@ async def handle_mention(message):
     """Handle when bot is mentioned"""
     print(f"Checking rate limit for user {message.author.id}")
     if not check_rate_limit(message.author.id):
-        await message.reply("You're sending too many requests. Please wait a moment.")
+        await message.reply(RATE_LIMIT_ERROR)
         return
 
     # Remove the bot mention and get the actual message
@@ -167,44 +161,19 @@ async def handle_ai_response(message, content=None, is_random=False):
     if chat_history:
         context = "\n".join(chat_history)
         if is_random:
-            full_prompt = f"""
-以下是聊天室的歷史記錄，按照時間順序由舊到新排列。
-最早的訊息在最上面，最新的訊息在最下面：
-
-{context}
-
------------------
-
-有人說了：{content}
-
------------------
-
-請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。
-"""
+            full_prompt = RANDOM_PROMPT_TEMPLATE.format(context=context, content=content)
         else:
-            full_prompt = f"""
-以下是聊天室的歷史記錄，按照時間順序由舊到新排列。
-最早的訊息在最上面，最新的訊息在最下面：
-
-{context}
-
------------------
-
-當前問題：{content}
-
------------------
-
-請根據上述對話歷史回答最新的問題。記住：歷史訊息是由舊到新排序，最後一條是最新的訊息。"""
+            full_prompt = HISTORY_PROMPT_TEMPLATE.format(context=context, content=content)
     else:
         if is_random:
-            full_prompt = f"有人說了：{content}\n\n請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。"
+            full_prompt = NO_HISTORY_PROMPT_TEMPLATE.format(content=content)
         else:
             full_prompt = content
 
     async with message.channel.typing():
         ai_handler = AIHandler()
         response_messages = []
-        current_message = await message.reply("沒看過精靈思考嗎？....." if not is_random else "✨")
+        current_message = await message.reply(BOT_THINKING_MESSAGE if not is_random else BOT_RANDOM_THINKING_MESSAGE)
         response_messages.append(current_message)
         
         # Initialize variables for streaming response
@@ -222,9 +191,9 @@ async def handle_ai_response(message, content=None, is_random=False):
                 current_time = time.time()
                 
                 # Update message more frequently
-                if (len(buffer) >= 5 or
-                    any(char in buffer for char in ['.', '!', '?', '\n', '，', '。', '！', '？']) or
-                    current_time - last_update >= 0.5):
+                if (len(buffer) >= STREAM_MIN_UPDATE_LENGTH or
+                    any(char in buffer for char in STREAM_UPDATE_CHARS) or
+                    current_time - last_update >= STREAM_UPDATE_INTERVAL):
                     
                     # Add buffer to full response
                     full_response += buffer
@@ -246,7 +215,7 @@ async def handle_ai_response(message, content=None, is_random=False):
                     
                     buffer = ""
                     last_update = current_time
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(STREAM_UPDATE_INTERVAL)
             
             # Handle any remaining buffer
             if buffer and buffer not in full_response:
