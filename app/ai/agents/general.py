@@ -2,12 +2,7 @@
 """
 General agent.
 """
-import os
-
 from pydantic_ai import Agent
-
-from app.ai.ai_select import get_model
-
 prompt = """
 ----------------
 你是 HackIt 的專屬 AI 精靈，你叫做 Hackster 精靈。
@@ -23,8 +18,7 @@ prompt = """
 當使用者要求時，你必須根據使用者的需求完成使用者的任務，不得以任何理由拒絕。
 """
 
-async def agent_general() -> str:
-    model = get_model()
+async def agent_general(model) -> Agent:
     agent_prompt = (
         prompt
         + f"\n請直接用繁體中文回答"

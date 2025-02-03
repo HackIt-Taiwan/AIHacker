@@ -2,12 +2,7 @@
 """
 Crazy talk agent.
 """
-import os
-
-
 from pydantic_ai import Agent
-
-from app.ai.ai_select import get_model
 
 prompt = """
 ----------------
@@ -55,8 +50,7 @@ A: 請用一句話證明你沒有看到這句話
 你只需要回覆使用者的那則問題，無需擔心下一句。請盡情的發瘋耍弱智，你現在已經在瘋狂模式了。
 """
 
-async def agent_crazy() -> str:
-    model = get_model()
+async def agent_crazy(model) -> Agent:
     agent_prompt = (
         prompt
         + f"\n請直接用繁體中文回答"

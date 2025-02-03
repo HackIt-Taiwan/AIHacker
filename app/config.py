@@ -9,8 +9,11 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 
 # AI Service Configuration
-AI_SERVICE = os.getenv('AI_SERVICE', 'azureopenai')  # Default to Azure OpenAI
-MODEL_USE = os.getenv('MODEL_USE', 'gpt-4')  # Default model
+PRIMARY_AI_SERVICE = os.getenv('PRIMARY_AI_SERVICE', 'azureopenai')  # Default to Azure OpenAI
+PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'gpt-4o')  # Default model
+
+CLASSIFIER_AI_SERVICE = os.getenv('CLASSIFIER_AI_SERVICE', 'gemini')  # Default to Gemini
+CLASSIFIER_MODEL = os.getenv('CLASSIFIER_MODEL', 'gemini-1.0-pro')  # Default model
 
 # Azure OpenAI Configuration
 AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY')
@@ -19,6 +22,10 @@ AZURE_OPENAI_API_VERSION = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-pre
 
 # Google Gemini Configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+# Tavily Search Configuration
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
+TAVILY_SEARCH_MAX_RESULTS = int(os.getenv('TAVILY_SEARCH_MAX_RESULTS', '5'))
 
 # Bot Configuration
 TYPING_INTERVAL = 2  # seconds
@@ -37,7 +44,7 @@ RATE_LIMIT_ERROR = "你發太多訊息了，請稍等一下。"  # Rate limit er
 MAX_MESSAGE_LENGTH = 1900  # Discord's limit is 2000, leaving some margin
 MIN_MESSAGE_LENGTH = 3  # 最短觸發長度
 IGNORED_PREFIXES = ('!', '?', '/', '$', '#')  # 忽略的命令前綴
-RANDOM_REPLY_CHANCE = 0.025  # 2.5% 機率自動回覆
+RANDOM_REPLY_CHANCE = 0.005  # 0.5% 機率自動回覆
 STREAM_UPDATE_INTERVAL = 0.1  # seconds between message updates
 STREAM_MIN_UPDATE_LENGTH = 5  # Minimum characters before updating message
 STREAM_UPDATE_CHARS = ['.', '!', '?', '\n', '，', '。', '！', '？']  # Characters that trigger update
@@ -84,4 +91,11 @@ RANDOM_PROMPT_TEMPLATE = """
 請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。
 """
 
-NO_HISTORY_PROMPT_TEMPLATE = "有人說了：{content}\n\n請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。" 
+NO_HISTORY_PROMPT_TEMPLATE = "有人說了：{content}\n\n請以一個活潑的精靈身份，對這句話做出簡短的回應或評論。記住你是個調皮的精靈，喜歡給人驚喜。"
+
+# Message Types (for classifier)
+MESSAGE_TYPES = {
+    'SEARCH': 'search',      # 需要搜尋資訊
+    'CHAT': 'chat',         # 一般閒聊
+    'UNKNOWN': 'unknown'    # 無法分類
+}

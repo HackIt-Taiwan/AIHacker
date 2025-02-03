@@ -5,4 +5,6 @@ Gemini service integration.
 import os
 from pydantic_ai.models.gemini import GeminiModel
 
-model = GeminiModel(os.getenv("MODEL_USE"), api_key=os.getenv("GEMINI_API_KEY"))
+def get_model(model_name: str) -> GeminiModel:
+    """Get Gemini model with specified name."""
+    return GeminiModel(model_name, api_key=os.getenv("GEMINI_API_KEY"))

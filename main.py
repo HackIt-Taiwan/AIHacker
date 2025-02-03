@@ -156,6 +156,8 @@ async def handle_ai_response(message, content=None, is_random=False):
     if content is None:
         content = message.content
 
+    context_copy = content
+
     # Get chat history
     chat_history = await get_chat_history(message.channel)
     if chat_history:
@@ -180,9 +182,12 @@ async def handle_ai_response(message, content=None, is_random=False):
         full_response = ""
         buffer = ""
         last_update = time.time()
+        print("--------------------------------")
+        print(f"context_copy: {context_copy}")
+        print("--------------------------------")
         
         try:
-            async for chunk in ai_handler.get_streaming_response(full_prompt):
+            async for chunk in ai_handler.get_streaming_response(full_prompt, context_copy):
                 # Skip if chunk is already in the full response
                 if chunk in full_response:
                     continue
