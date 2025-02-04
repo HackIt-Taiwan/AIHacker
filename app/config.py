@@ -97,5 +97,11 @@ NO_HISTORY_PROMPT_TEMPLATE = "有人說了：{content}\n\n請以一個活潑的�
 MESSAGE_TYPES = {
     'SEARCH': 'search',      # 需要搜尋資訊
     'CHAT': 'chat',         # 一般閒聊
+    'TASK': 'task',        # 要求執行任務
+    'REMINDER': 'reminder', # 設定提醒
     'UNKNOWN': 'unknown'    # 無法分類
 }
+
+# Reminder Configuration
+REMINDER_CHECK_INTERVAL = 60  # 檢查提醒的間隔（秒）
+REMINDER_DB_PATH = "data/reminders.db"  # 提醒資料庫路徑

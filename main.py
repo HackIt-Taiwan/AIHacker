@@ -18,6 +18,7 @@ from app.config import (
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
+from app.reminder_manager import ReminderManager
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -26,6 +27,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Rate limiting
 message_timestamps: Dict[int, List[float]] = defaultdict(list)
+
+# Global variables
+reminder_manager = None
+ai_handler = None
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -76,8 +81,16 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
+    global reminder_manager, ai_handler
     print(f'{bot.user} has connected to Discord!')
     await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
+    
+    # Initialize reminder manager
+    reminder_manager = ReminderManager(bot)
+    reminder_manager.start()
+    
+    # Initialize AI handler
+    ai_handler = AIHandler(reminder_manager)
 
 async def get_chat_history(channel, target_chars=CHAT_HISTORY_TARGET_CHARS, max_messages=CHAT_HISTORY_MAX_MESSAGES):
     """
@@ -173,7 +186,6 @@ async def handle_ai_response(message, content=None, is_random=False):
             full_prompt = content
 
     async with message.channel.typing():
-        ai_handler = AIHandler()
         response_messages = []
         current_message = await message.reply(BOT_THINKING_MESSAGE if not is_random else BOT_RANDOM_THINKING_MESSAGE)
         response_messages.append(current_message)
@@ -187,7 +199,13 @@ async def handle_ai_response(message, content=None, is_random=False):
         print("--------------------------------")
         
         try:
-            async for chunk in ai_handler.get_streaming_response(full_prompt, context_copy):
+            async for chunk in ai_handler.get_streaming_response(
+                full_prompt, 
+                context_copy,
+                message.author.id,
+                message.channel.id,
+                message.guild.id
+            ):
                 # Skip if chunk is already in the full response
                 if chunk in full_response:
                     continue
@@ -251,7 +269,12 @@ async def on_error(event, *args, **kwargs):
     raise
 
 def main():
-    bot.run(DISCORD_TOKEN)
-
+    try:
+        bot.run(DISCORD_TOKEN)
+    finally:
+        # Stop reminder manager
+        if reminder_manager:
+            reminder_manager.stop()
+            
 if __name__ == "__main__":
     main() 
