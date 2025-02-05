@@ -34,29 +34,34 @@ class ReminderManager:
             ''')
             conn.commit()
 
-    def parse_reminder(self, content: str) -> Optional[Tuple[str, str, str]]:
+    def parse_reminder(self, content: str) -> Optional[Tuple[str, str, str, str]]:
         """Parse reminder commands from AI response.
         Returns:
-            Tuple of (command_type, time_str, task) or None if no valid command found
+            Tuple of (command_type, time_str, task, matched_command) or None if no valid command found
             command_type can be 'add', 'list', or 'delete'
         """
         # Check for reminder addition
-        add_match = re.search(r'\[REMINDER\]\s*TIME=(.*?)\s*TASK=(.*?)\s*\[/REMINDER\]', 
-                            content, re.DOTALL)
+        add_match = re.search(r'\[REMINDER\].*?\[/REMINDER\]', content, re.DOTALL)
         if add_match:
-            return ('add', add_match.group(1).strip(), add_match.group(2).strip())
+            time_match = re.search(r'TIME=(.*?)(?:\n|$)', add_match.group())
+            task_match = re.search(r'TASK=(.*?)(?:\n|$|\[)', add_match.group())
+            if time_match and task_match:
+                return ('add', time_match.group(1).strip(), task_match.group(1).strip(), add_match.group())
             
         # Check for reminder listing
-        list_match = re.search(r'\[LIST_REMINDERS\]\s*\[/LIST_REMINDERS\]', 
-                             content, re.DOTALL)
+        list_match = re.search(r'\[LIST_REMINDERS\]\s*\[/LIST_REMINDERS\]', content, re.DOTALL)
         if list_match:
-            return ('list', '', '')
+            return ('list', '', '', list_match.group())
             
         # Check for reminder deletion
-        delete_match = re.search(r'\[DELETE_REMINDER\]\s*TASK=(.*?)\s*\[/DELETE_REMINDER\]', 
-                               content, re.DOTALL)
+        delete_match = re.search(r'\[DELETE_REMINDER\].*?\[/DELETE_REMINDER\]', content, re.DOTALL)
         if delete_match:
-            return ('delete', '', delete_match.group(1).strip())
+            time_match = re.search(r'TIME=(.*?)(?:\n|$)', delete_match.group())
+            task_match = re.search(r'TASK=(.*?)(?:\n|$|\[)', delete_match.group())
+            time_str = time_match.group(1).strip() if time_match else ''
+            task = task_match.group(1).strip() if task_match else ''
+            if time_str or task:  # 至少需要時間或任務其中之一
+                return ('delete', time_str, task, delete_match.group())
             
         return None
 
@@ -92,6 +97,59 @@ class ReminderManager:
             
             return reminders
 
+    def find_reminders(self, user_id: int, guild_id: int, task: str = None, time_str: str = None) -> List[Dict]:
+        """Find reminders by task description and/or time.
+        Args:
+            user_id: The user ID
+            guild_id: The guild ID
+            task: Optional task description to match
+            time_str: Optional time string in YYYY-MM-DD HH:mm format
+        Returns:
+            List of matching reminders
+        """
+        with sqlite3.connect(REMINDER_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            query = '''
+                SELECT id, reminder_time, task
+                FROM reminders
+                WHERE user_id = ? AND guild_id = ?
+            '''
+            params = [user_id, guild_id]
+            
+            if task:
+                query += ' AND task LIKE ?'
+                params.append(f'%{task}%')
+                
+            if time_str:
+                try:
+                    # 將時間字符串轉換為 datetime 對象進行比較
+                    target_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+                    # 使用 strftime 確保格式一致
+                    time_str_formatted = target_time.strftime('%Y-%m-%d %H:%M:00')
+                    query += ' AND reminder_time = ?'
+                    params.append(time_str_formatted)
+                except ValueError:
+                    print(f"Invalid time format: {time_str}")
+                    return []
+                
+            query += ' ORDER BY reminder_time ASC'
+            
+            try:
+                cursor = conn.execute(query, params)
+                reminders = []
+                for row in cursor:
+                    reminder_time = datetime.strptime(row['reminder_time'], '%Y-%m-%d %H:%M:%S')
+                    reminders.append({
+                        'id': row['id'],
+                        'time': reminder_time,
+                        'task': row['task']
+                    })
+                
+                return reminders
+            except Exception as e:
+                print(f"Error finding reminders: {str(e)}")
+                return []
+
     def delete_reminder(self, user_id: int, guild_id: int, task: str) -> bool:
         """Delete a reminder for a specific user in a guild by task description.
         Returns True if a reminder was deleted, False otherwise.
@@ -101,6 +159,18 @@ class ReminderManager:
                 DELETE FROM reminders
                 WHERE user_id = ? AND guild_id = ? AND task LIKE ?
             ''', (user_id, guild_id, f'%{task}%'))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_reminder_by_id(self, user_id: int, guild_id: int, reminder_id: int) -> bool:
+        """Delete a specific reminder by its ID.
+        Returns True if the reminder was deleted, False otherwise.
+        """
+        with sqlite3.connect(REMINDER_DB_PATH) as conn:
+            cursor = conn.execute('''
+                DELETE FROM reminders
+                WHERE id = ? AND user_id = ? AND guild_id = ?
+            ''', (reminder_id, user_id, guild_id))
             conn.commit()
             return cursor.rowcount > 0
 

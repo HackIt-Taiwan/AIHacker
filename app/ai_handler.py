@@ -51,13 +51,13 @@ class AIHandler:
         """Remove command markers and their contents from the response while preserving important messages."""
         # 先提取重要的訊息（如設定成功的回應）
         important_messages = []
-        success_match = re.search(r'好的，[^[\n]*', response)
+        success_match = re.findall(r'好的，[^[\n]*', response)
         if success_match:
-            important_messages.append(success_match.group())
+            important_messages.extend(success_match)
             
-        checkmark_match = re.search(r'✅[^[\n]*', response)
+        checkmark_match = re.findall(r'✅[^[\n]*', response)
         if checkmark_match:
-            important_messages.append(checkmark_match.group())
+            important_messages.extend(checkmark_match)
 
         # 移除所有命令標記及其內容
         patterns = [
@@ -152,9 +152,13 @@ class AIHandler:
                         
                 # 如果是提醒類型，解析並處理提醒相關命令
                 if message_type == MESSAGE_TYPES['REMINDER'] and self._reminder_manager:
-                    reminder_info = self._reminder_manager.parse_reminder(response_buffer)
-                    if reminder_info:
-                        command_type, time_str, task = reminder_info
+                    # 允許處理多個命令
+                    while True:
+                        reminder_info = self._reminder_manager.parse_reminder(response_buffer)
+                        if not reminder_info:
+                            break
+                            
+                        command_type, time_str, task, matched_command = reminder_info
                         
                         if command_type == 'add':
                             try:
@@ -172,11 +176,39 @@ class AIHandler:
                             formatted_list = self._format_reminder_list(reminders)
                             yield f"\n{formatted_list}"
                             
+                            # 將提醒清單添加到 AI 的輸入中，讓 AI 可以繼續處理後續命令
+                            message += f"\n\n以下是您目前所有的提醒事項：\n{formatted_list}"
+                            
+                            # 重新調用 AI，讓它處理後續命令
+                            async with agent.run_stream(message) as result:
+                                async for chunk in result.stream_text(delta=True):
+                                    response_buffer += chunk
+                                    cleaned_chunk = self._clean_response(chunk)
+                                    if cleaned_chunk:
+                                        yield cleaned_chunk
+                            
                         elif command_type == 'delete':
-                            if self._reminder_manager.delete_reminder(user_id, guild_id, task):
-                                print(f"Deleted reminder with task: {task}")
+                            # 根據刪除命令的條件（時間和/或任務內容）查找匹配的提醒
+                            matching_reminders = self._reminder_manager.find_reminders(
+                                user_id, guild_id, task if task else None, time_str if time_str else None
+                            )
+                            
+                            if not matching_reminders:
+                                yield "\n找不到符合的提醒事項，請確認您的刪除條件。"
                             else:
-                                yield f"\n找不到符合的提醒事項：{task}"
+                                yield "\n根據您的刪除條件，找到以下提醒："
+                                for reminder in matching_reminders:
+                                    formatted_time = reminder['time'].strftime('%Y-%m-%d %H:%M')
+                                    yield f"\n- {formatted_time} - {reminder['task']}"
+                                    
+                                    # 刪除並顯示刪除結果
+                                    if self._reminder_manager.delete_reminder_by_id(user_id, guild_id, reminder['id']):
+                                        yield f"\n✅ 已刪除提醒：{formatted_time} - {reminder['task']}"
+                                    else:
+                                        yield f"\n❌ 刪除提醒失敗：{formatted_time} - {reminder['task']}"
+                        
+                        # 移除已處理的命令
+                        response_buffer = response_buffer.replace(matched_command, '')
                 return
                 
             except Exception as e:
@@ -186,3 +218,34 @@ class AIHandler:
                     return
                 print(f"AI response attempt {attempt + 1} failed: {str(e)}")
                 await asyncio.sleep(AI_RETRY_DELAY)
+
+    async def handle_command(self, command_type: str, command_data: dict) -> AsyncGenerator[str, None]:
+        if command_type == "list_reminders":
+            reminders = await self._reminder_manager.get_reminders()
+            if not reminders:
+                yield "目前沒有任何提醒事項"
+                return
+            
+            formatted_reminders = "\n".join([
+                f"時間：{r['time']} 提醒：{r['task']}"
+                for r in reminders
+            ])
+            yield f"以下是您目前的提醒事項：\n{formatted_reminders}"
+            
+            # 如果這是刪除流程的一部分，將提醒清單添加到AI的上下文中
+            if command_data.get("is_delete_flow"):
+                delete_context = f"""
+                以下是用戶目前的提醒清單：
+                {formatted_reminders}
+                
+                請根據用戶的要求刪除相應的提醒。
+                """
+                # 重新調用AI來處理刪除命令
+                response = await self.get_streaming_response(delete_context)
+                async for msg in response:
+                    yield msg
+
+        elif command_type == "delete_reminder":
+            # 首先列出所有提醒
+            async for msg in self.handle_command("list_reminders", {"is_delete_flow": True}):
+                yield msg
