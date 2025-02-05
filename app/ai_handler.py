@@ -399,13 +399,29 @@ class AIHandler:
                 channel = self._bot.get_channel(channel_id)
                 if channel and isinstance(channel, discord.TextChannel):
                     msg = await channel.send(embed=embed)
+                    
+                    # 創建討論串
+                    thread = await msg.create_thread(
+                        name=f"{member.display_name}的請假討論串",
+                        reason="請假期間的相關討論"
+                    )
+                    
+                    # 在討論串發送初始訊息
+                    await thread.send(
+                        f"這是 {member.mention} 的請假討論串。\n"
+                        f"請假期間：{start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}\n"
+                        f"如果有任何事情要找 {member.mention}，請於此討論串留言。"
+                    )
+                    
                     # 獲取最新的請假記錄
                     leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
                     if leaves:
                         # 找到最新的請假記錄（應該是剛剛添加的）
                         latest_leave = leaves[0]  # 假設請假記錄是按時間倒序排列的
-                        # 更新公告訊息ID
+                        # 更新公告訊息ID和討論串ID
                         self._leave_manager.update_announcement_message(latest_leave['id'], msg.id, channel_id)
+                        self._leave_manager.update_thread_id(latest_leave['id'], thread.id)
+                        
             except Exception as e:
                 print(f"發送請假公告到頻道 {channel_id} 時發生錯誤：{str(e)}")
 
@@ -479,3 +495,37 @@ class AIHandler:
         while True:
             await self.update_leave_announcements()
             await asyncio.sleep(3600)  # 每小時檢查一次
+
+    async def handle_mention_of_leave_user(self, message: discord.Message, mention: discord.Member, leave_info: dict):
+        """處理有人提及請假中的使用者"""
+        try:
+            # 獲取討論串資訊
+            thread_info = self._leave_manager.get_leave_thread(mention.id, message.guild.id)
+            if not thread_info:
+                return
+            
+            # 建立討論串連結
+            thread_url = f"https://discord.com/channels/{message.guild.id}/{thread_info['channel_id']}/{thread_info['thread_id']}"
+            message_url = message.jump_url
+            
+            # 回覆提及者
+            await message.reply(
+                f"⚠️ {mention.display_name} 目前正在請假中\n"
+                f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                f"{leave_info['end_date'].strftime('%Y-%m-%d')}\n"
+                f"💬 請在請假討論串留言：{thread_url}"
+            )
+            
+            # 在討論串中發送通知
+            channel = self._bot.get_channel(thread_info['channel_id'])
+            if channel:
+                thread = channel.get_thread(thread_info['thread_id'])
+                if thread:
+                    await thread.send(
+                        f"⚠️ {message.author.mention} 在 {message.channel.mention} "
+                        f"提及了 {mention.mention}\n"
+                        f"🔗 原始訊息：{message_url}"
+                    )
+                
+        except Exception as e:
+            print(f"處理請假者被提及時發生錯誤：{str(e)}")

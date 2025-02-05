@@ -95,13 +95,13 @@ async def on_ready():
     global reminder_manager, ai_handler, welcomed_members_db, leave_manager
     print(f'{bot.user} has connected to Discord!')
     
-    # 註冊斜線命令
-    try:
-        print("開始註冊斜線命令...")
-        await bot.tree.sync()
-        print("斜線命令註冊完成！")
-    except Exception as e:
-        print(f"註冊斜線命令時發生錯誤: {str(e)}")
+    # # 註冊斜線命令
+    # try:
+    #     print("開始註冊斜線命令...")
+    #     await bot.tree.sync()
+    #     print("斜線命令註冊完成！")
+    # except Exception as e:
+    #     print(f"註冊斜線命令時發生錯誤: {str(e)}")
     
     await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
     

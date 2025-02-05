@@ -23,6 +23,7 @@ class LeaveManager:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     announcement_msg_id INTEGER,
                     announcement_channel_id INTEGER,
+                    thread_id INTEGER,
                     UNIQUE(user_id, guild_id, start_date, end_date)
                 )
             ''')
@@ -197,4 +198,52 @@ class LeaveManager:
                 return cursor.rowcount > 0
         except Exception as e:
             print(f"刪除請假記錄時發生錯誤: {str(e)}")
-            return False 
+            return False
+
+    def update_thread_id(self, leave_id: int, thread_id: int) -> bool:
+        """更新請假記錄的討論串ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    UPDATE leaves 
+                    SET thread_id = ?
+                    WHERE id = ?
+                ''', (thread_id, leave_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"更新討論串ID時發生錯誤: {str(e)}")
+            return False
+
+    def get_leave_thread(self, user_id: int, guild_id: int, current_date: datetime = None) -> Optional[Dict]:
+        """獲取指定用戶當前的請假討論串資訊"""
+        if current_date is None:
+            current_date = datetime.now()
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute('''
+                    SELECT id, thread_id, announcement_channel_id, announcement_msg_id,
+                           start_date, end_date, reason
+                    FROM leaves
+                    WHERE user_id = ? AND guild_id = ?
+                    AND date(?) BETWEEN date(start_date) AND date(end_date)
+                    AND thread_id IS NOT NULL
+                ''', (user_id, guild_id, current_date.strftime('%Y-%m-%d')))
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row['id'],
+                        'thread_id': row['thread_id'],
+                        'channel_id': row['announcement_channel_id'],
+                        'message_id': row['announcement_msg_id'],
+                        'start_date': datetime.strptime(row['start_date'], '%Y-%m-%d'),
+                        'end_date': datetime.strptime(row['end_date'], '%Y-%m-%d'),
+                        'reason': row['reason']
+                    }
+                return None
+        except Exception as e:
+            print(f"獲取請假討論串資訊時發生錯誤: {str(e)}")
+            return None 
