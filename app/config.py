@@ -35,6 +35,10 @@ BOT_ACTIVITY = "人類..."  # Discord bot activity status
 BOT_THINKING_MESSAGE = "沒看過精靈思考嗎？....."  # Message shown when bot is thinking
 BOT_RANDOM_THINKING_MESSAGE = "✨"  # Message shown when bot is thinking (random trigger)
 
+# Welcome Configuration
+WELCOME_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('WELCOME_CHANNEL_IDS', '').split(',') if id.strip()]  # 歡迎頻道 ID 列表
+DEFAULT_WELCOME_MESSAGE = "歡迎 {member} 加入我們的伺服器！✨"  # 預設歡迎訊息
+
 # Rate Limiting
 RATE_LIMIT_MESSAGES = 5  # Maximum messages per period
 RATE_LIMIT_PERIOD = 60  # seconds
@@ -105,3 +109,4 @@ MESSAGE_TYPES = {
 # Reminder Configuration
 REMINDER_CHECK_INTERVAL = 60  # 檢查提醒的間隔（秒）
 REMINDER_DB_PATH = "data/reminders.db"  # 提醒資料庫路徑
+WELCOMED_MEMBERS_DB_PATH = "data/welcomed_members.db"  # 已歡迎成員資料庫路徑
