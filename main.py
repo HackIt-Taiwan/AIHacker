@@ -296,11 +296,7 @@ async def on_message(message):
             # 檢查被提及的用戶是否正在請假
             leave_info = leave_manager.get_active_leave(mention.id, message.guild.id)
             if leave_info:
-                await message.reply(
-                    f"⚠️ {mention.display_name} 目前正在請假中\n"
-                    f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
-                    f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
-                )
+                await ai_handler.handle_mention_of_leave_user(message, mention, leave_info)
                 continue
 
     # Check if the bot was mentioned
@@ -437,109 +433,109 @@ def has_leave_permission(member: discord.Member) -> bool:
     """檢查成員是否擁有請假權限"""
     return any(role.id in LEAVE_ALLOWED_ROLES for role in member.roles)
 
-@bot.tree.command(name="請假", description="使用自然語言管理請假")
-async def leave_nl(interaction: discord.Interaction, 請求: str):
-    """使用自然語言管理請假"""
-    if not has_leave_permission(interaction.user):
-        await interaction.response.send_message(
-            "❌ 您沒有使用請假指令的權限。需要特定的身份組才能使用此指令。",
-            ephemeral=True
-        )
-        return
+# @bot.tree.command(name="請假", description="使用自然語言管理請假")
+# async def leave_nl(interaction: discord.Interaction, 請求: str):
+#     """使用自然語言管理請假"""
+#     if not has_leave_permission(interaction.user):
+#         await interaction.response.send_message(
+#             "❌ 您沒有使用請假指令的權限。需要特定的身份組才能使用此指令。",
+#             ephemeral=True
+#         )
+#         return
 
-    await interaction.response.defer()
+#     await interaction.response.defer()
     
-    try:
-        # 獲取 AI 回應
-        agent = await agent_leave(ai_handler.model)
-        response = await agent.agenerate(請求)
+#     try:
+#         # 獲取 AI 回應
+#         agent = await agent_leave(ai_handler.model)
+#         response = await agent.agenerate(請求)
         
-        # 解析回應中的命令
-        message = ""
-        commands = []
+#         # 解析回應中的命令
+#         message = ""
+#         commands = []
         
-        # 使用正則表達式找出所有命令
-        leave_matches = re.finditer(r'\[LEAVE\](.*?)\[/LEAVE\]', response, re.DOTALL)
-        list_matches = re.finditer(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response, re.DOTALL)
-        delete_matches = re.finditer(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response, re.DOTALL)
+#         # 使用正則表達式找出所有命令
+#         leave_matches = re.finditer(r'\[LEAVE\](.*?)\[/LEAVE\]', response, re.DOTALL)
+#         list_matches = re.finditer(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response, re.DOTALL)
+#         delete_matches = re.finditer(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response, re.DOTALL)
         
-        # 處理一般文字（移除所有命令）
-        message = re.sub(r'\[(LEAVE|LIST_LEAVES|DELETE_LEAVE)\].*?\[/\1\]', '', response, flags=re.DOTALL)
-        message = message.strip()
+#         # 處理一般文字（移除所有命令）
+#         message = re.sub(r'\[(LEAVE|LIST_LEAVES|DELETE_LEAVE)\].*?\[/\1\]', '', response, flags=re.DOTALL)
+#         message = message.strip()
         
-        # 處理請假命令
-        for match in leave_matches:
-            command_text = match.group(1).strip()
-            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+#         # 處理請假命令
+#         for match in leave_matches:
+#             command_text = match.group(1).strip()
+#             start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+#             end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+#             reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
             
-            if start_date and end_date:
-                start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
-                end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
-                reason_text = reason.group(1) if reason else None
+#             if start_date and end_date:
+#                 start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
+#                 end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
+#                 reason_text = reason.group(1) if reason else None
                 
-                if leave_manager.add_leave(
-                    interaction.user.id,
-                    interaction.guild.id,
-                    start,
-                    end,
-                    reason_text
-                ):
-                    message += "\n✅ 已為您申請請假"
-                else:
-                    message += "\n❌ 請假申請失敗，可能與現有請假時間重疊"
+#                 if leave_manager.add_leave(
+#                     interaction.user.id,
+#                     interaction.guild.id,
+#                     start,
+#                     end,
+#                     reason_text
+#                 ):
+#                     message += "\n✅ 已為您申請請假"
+#                 else:
+#                     message += "\n❌ 請假申請失敗，可能與現有請假時間重疊"
         
-        # 處理查看請假命令
-        for match in list_matches:
-            leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
-            if not leaves:
-                message += f"\n📅 {interaction.user.display_name} 目前沒有請假記錄。"
-            else:
-                message += f"\n📅 {interaction.user.display_name} 的請假記錄：\n\n"
-                for leave in leaves:
-                    message += (
-                        f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
-                        f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
-                    )
-                    if leave['reason']:
-                        message += f"📝 原因：{leave['reason']}\n"
-                    message += "\n"
+#         # 處理查看請假命令
+#         for match in list_matches:
+#             leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
+#             if not leaves:
+#                 message += f"\n📅 {interaction.user.display_name} 目前沒有請假記錄。"
+#             else:
+#                 message += f"\n📅 {interaction.user.display_name} 的請假記錄：\n\n"
+#                 for leave in leaves:
+#                     message += (
+#                         f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
+#                         f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
+#                     )
+#                     if leave['reason']:
+#                         message += f"📝 原因：{leave['reason']}\n"
+#                     message += "\n"
         
-        # 處理刪除請假命令
-        for match in delete_matches:
-            command_text = match.group(1).strip()
-            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+#         # 處理刪除請假命令
+#         for match in delete_matches:
+#             command_text = match.group(1).strip()
+#             start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+#             end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+#             reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
             
-            leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
-            deleted_count = 0
+#             leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
+#             deleted_count = 0
             
-            for leave in leaves:
-                should_delete = True
+#             for leave in leaves:
+#                 should_delete = True
                 
-                if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
-                    should_delete = False
-                if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
-                    should_delete = False
-                if reason and leave['reason'] != reason.group(1):
-                    should_delete = False
+#                 if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
+#                     should_delete = False
+#                 if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
+#                     should_delete = False
+#                 if reason and leave['reason'] != reason.group(1):
+#                     should_delete = False
                     
-                if should_delete:
-                    if leave_manager.delete_leave(leave['id'], interaction.user.id, interaction.guild.id):
-                        deleted_count += 1
+#                 if should_delete:
+#                     if leave_manager.delete_leave(leave['id'], interaction.user.id, interaction.guild.id):
+#                         deleted_count += 1
             
-            if deleted_count > 0:
-                message += f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
-            else:
-                message += "\n❌ 找不到符合條件的請假記錄"
+#             if deleted_count > 0:
+#                 message += f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
+#             else:
+#                 message += "\n❌ 找不到符合條件的請假記錄"
         
-        # 發送回應
-        await interaction.followup.send(message.strip())
+#         # 發送回應
+#         await interaction.followup.send(message.strip())
         
-    except Exception as e:
-        await interaction.followup.send(f"❌ 處理請假請求時發生錯誤：{str(e)}", ephemeral=True)
+#     except Exception as e:
+#         await interaction.followup.send(f"❌ 處理請假請求時發生錯誤：{str(e)}", ephemeral=True)
 
 def main():
     try:

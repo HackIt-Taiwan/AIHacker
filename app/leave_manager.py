@@ -27,6 +27,13 @@ class LeaveManager:
                     UNIQUE(user_id, guild_id, start_date, end_date)
                 )
             ''')
+            
+            # 檢查是否需要添加 thread_id 欄位
+            cursor = conn.execute("PRAGMA table_info(leaves)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'thread_id' not in columns:
+                conn.execute('ALTER TABLE leaves ADD COLUMN thread_id INTEGER')
+            
             conn.commit()
 
     def get_leave_status(self, start_date: datetime, end_date: datetime, current_time: datetime = None) -> Literal['pending', 'active', 'expired']:

@@ -418,9 +418,11 @@ class AIHandler:
                     if leaves:
                         # 找到最新的請假記錄（應該是剛剛添加的）
                         latest_leave = leaves[0]  # 假設請假記錄是按時間倒序排列的
-                        # 更新公告訊息ID和討論串ID
+                        # 更新公告訊息ID和頻道ID
                         self._leave_manager.update_announcement_message(latest_leave['id'], msg.id, channel_id)
+                        # 更新討論串ID
                         self._leave_manager.update_thread_id(latest_leave['id'], thread.id)
+                        print(f"已更新請假記錄 {latest_leave['id']} 的討論串ID：{thread.id}")
                         
             except Exception as e:
                 print(f"發送請假公告到頻道 {channel_id} 時發生錯誤：{str(e)}")
@@ -501,31 +503,108 @@ class AIHandler:
         try:
             # 獲取討論串資訊
             thread_info = self._leave_manager.get_leave_thread(mention.id, message.guild.id)
-            if not thread_info:
+            print(f"獲取到的討論串資訊：{thread_info}")
+            
+            # 檢查最近15則訊息是否已經提醒過
+            has_recent_notification = False
+            try:
+                async for msg in message.channel.history(limit=15):
+                    if msg.author == self._bot.user and msg.reference and msg.reference.message_id:
+                        try:
+                            referenced_msg = await message.channel.fetch_message(msg.reference.message_id)
+                            if referenced_msg and mention in referenced_msg.mentions:
+                                has_recent_notification = True
+                                break
+                        except:
+                            continue
+            except Exception as e:
+                print(f"檢查歷史訊息時發生錯誤：{str(e)}")
+            
+            if not thread_info or not thread_info.get('thread_id'):
+                print(f"找不到 {mention.display_name} 的請假討論串")
+                # 如果找不到討論串，且最近沒有提醒過，才顯示基本的請假資訊
+                if not has_recent_notification:
+                    await message.reply(
+                        f"⚠️ {mention.display_name} 目前正在請假中\n"
+                        f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                        f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
+                    )
                 return
             
             # 建立討論串連結
-            thread_url = f"https://discord.com/channels/{message.guild.id}/{thread_info['channel_id']}/{thread_info['thread_id']}"
+            thread_url = f"https://discord.com/channels/{message.guild.id}/{thread_info['thread_id']}"
             message_url = message.jump_url
             
-            # 回覆提及者
-            await message.reply(
-                f"⚠️ {mention.display_name} 目前正在請假中\n"
-                f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
-                f"{leave_info['end_date'].strftime('%Y-%m-%d')}\n"
-                f"💬 請在請假討論串留言：{thread_url}"
-            )
+            print(f"討論串連結：{thread_url}")
+            print(f"原始訊息連結：{message_url}")
+            
+            # 只有在最近沒有提醒過的情況下才回覆
+            if not has_recent_notification:
+                await message.reply(
+                    f"⚠️ {mention.display_name} 目前正在請假中\n"
+                    f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                    f"{leave_info['end_date'].strftime('%Y-%m-%d')}\n"
+                    f"💬 請在請假討論串留言：{thread_url}"
+                )
             
             # 在討論串中發送通知
-            channel = self._bot.get_channel(thread_info['channel_id'])
-            if channel:
-                thread = channel.get_thread(thread_info['thread_id'])
-                if thread:
-                    await thread.send(
-                        f"⚠️ {message.author.mention} 在 {message.channel.mention} "
-                        f"提及了 {mention.mention}\n"
-                        f"🔗 原始訊息：{message_url}"
-                    )
+            try:
+                # 獲取父頻道
+                channel = self._bot.get_channel(thread_info['channel_id'])
+                if not channel:
+                    print(f"找不到頻道 {thread_info['channel_id']}")
+                    return
+
+                # 直接從 guild 獲取討論串
+                thread = message.guild.get_thread(thread_info['thread_id'])
+                if not thread:
+                    print(f"找不到討論串 {thread_info['thread_id']}")
+                    return
+                
+                # 準備訊息預覽，替換提及為可讀名稱
+                preview = f"{message.author.display_name}: {message.content}"
+                # 替換所有使用者提及
+                for user in message.mentions:
+                    preview = preview.replace(f'<@{user.id}>', user.display_name)
+                # 替換所有頻道提及
+                for channel_mention in message.channel_mentions:
+                    preview = preview.replace(f'<#{channel_mention.id}>', f'#{channel_mention.name}')
+                # 替換所有身分組提及
+                for role in message.role_mentions:
+                    preview = preview.replace(f'<@&{role.id}>', f'@{role.name}')
+                
+                # 如果訊息太長，截斷並加上...
+                if len(preview) > 100:
+                    # 保留發言者名稱，只截斷訊息內容
+                    author_part = f"{message.author.display_name}: "
+                    content_part = preview[len(author_part):]
+                    preview = author_part + content_part[:97-len(author_part)] + "..."
+                # 限制行數
+                preview_lines = preview.split('\n')
+                if len(preview_lines) > 3:
+                    preview = '\n'.join(preview_lines[:3]) + "\n..."
+                
+                await thread.send(
+                    f"⚠️ {message.author.mention} 在 {message.channel.mention} "
+                    f"提及了 {mention.mention}\n"
+                    f"🔗 原始訊息：{message_url}\n"
+                    f"```\n{preview}\n```"
+                )
+                print(f"已在討論串中發送通知")
+                
+            except discord.NotFound:
+                print(f"找不到討論串或頻道")
+            except discord.Forbidden:
+                print(f"沒有權限訪問討論串")
+            except Exception as e:
+                print(f"在討論串中發送通知時發生錯誤：{str(e)}")
                 
         except Exception as e:
             print(f"處理請假者被提及時發生錯誤：{str(e)}")
+            # 發生錯誤時，如果最近沒有提醒過，才顯示基本的請假資訊
+            if not has_recent_notification:
+                await message.reply(
+                    f"⚠️ {mention.display_name} 目前正在請假中\n"
+                    f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                    f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
+                )
