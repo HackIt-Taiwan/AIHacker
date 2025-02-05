@@ -20,6 +20,7 @@ class LeaveManager:
                     start_date DATE NOT NULL,
                     end_date DATE NOT NULL,
                     reason TEXT,
+                    deputy_id INTEGER,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     announcement_msg_id INTEGER,
                     announcement_channel_id INTEGER,
@@ -28,11 +29,13 @@ class LeaveManager:
                 )
             ''')
             
-            # 檢查是否需要添加 thread_id 欄位
+            # 檢查是否需要添加欄位
             cursor = conn.execute("PRAGMA table_info(leaves)")
             columns = [column[1] for column in cursor.fetchall()]
             if 'thread_id' not in columns:
                 conn.execute('ALTER TABLE leaves ADD COLUMN thread_id INTEGER')
+            if 'deputy_id' not in columns:
+                conn.execute('ALTER TABLE leaves ADD COLUMN deputy_id INTEGER')
             
             conn.commit()
 
@@ -57,15 +60,15 @@ class LeaveManager:
         else:
             return 'active'
 
-    def add_leave(self, user_id: int, guild_id: int, start_date: datetime, end_date: datetime, reason: str = None) -> bool:
+    def add_leave(self, user_id: int, guild_id: int, start_date: datetime, end_date: datetime, reason: str = None, deputy_id: int = None) -> bool:
         """添加請假記錄"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute('''
-                    INSERT INTO leaves (user_id, guild_id, start_date, end_date, reason)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO leaves (user_id, guild_id, start_date, end_date, reason, deputy_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (user_id, guild_id, start_date.strftime('%Y-%m-%d'), 
-                     end_date.strftime('%Y-%m-%d'), reason))
+                     end_date.strftime('%Y-%m-%d'), reason, deputy_id))
                 conn.commit()
                 return True
         except sqlite3.IntegrityError:
@@ -149,7 +152,7 @@ class LeaveManager:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute('''
-                    SELECT id, start_date, end_date, reason
+                    SELECT id, start_date, end_date, reason, deputy_id
                     FROM leaves
                     WHERE user_id = ? AND guild_id = ?
                     AND date(?) BETWEEN date(start_date) AND date(end_date)
@@ -161,7 +164,8 @@ class LeaveManager:
                         'id': row['id'],
                         'start_date': datetime.strptime(row['start_date'], '%Y-%m-%d'),
                         'end_date': datetime.strptime(row['end_date'], '%Y-%m-%d'),
-                        'reason': row['reason']
+                        'reason': row['reason'],
+                        'deputy_id': row['deputy_id']
                     }
                 return None
         except Exception as e:

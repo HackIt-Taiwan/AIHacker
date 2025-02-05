@@ -58,8 +58,8 @@ CHAT_HISTORY_TARGET_CHARS = 3000  # 目標字符數
 CHAT_HISTORY_MAX_MESSAGES = 300  # 最大消息數量
 
 # AI Response Configuration
-AI_MAX_RETRIES = 5  # 最大重試次數
-AI_RETRY_DELAY = 15  # seconds, 重試間隔
+AI_MAX_RETRIES = 3  # 最大重試次數
+AI_RETRY_DELAY = 1  # seconds, 重試間隔
 AI_ERROR_MESSAGE = "抱歉，AI 服務暫時無法回應，請稍後再試。"  # Error message when AI fails
 
 # Message Split Configuration
@@ -113,5 +113,5 @@ WELCOMED_MEMBERS_DB_PATH = "data/welcomed_members.db"  # 已歡迎成員資料�
 
 # Leave Configuration
 LEAVE_DB_PATH = "data/leaves.db"  # 請假資料庫路徑
-LEAVE_ALLOWED_ROLES = [int(id.strip()) for id in os.getenv('LEAVE_ALLOWED_ROLES', '').split(',') if id.strip()]  # 允許使用請假指令的身份組 ID 列表
-LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('LEAVE_ANNOUNCEMENT_CHANNEL_IDS', '').split(',') if id.strip()]  # 請假公告頻道 ID 列表
+LEAVE_ALLOWED_ROLES = [1234567890]  # 允許使用請假指令的身份組 ID 列表
+LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [1234567890]  # 請假公告頻道 ID 列表

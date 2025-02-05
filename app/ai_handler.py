@@ -8,7 +8,8 @@ from app.config import (
     MESSAGE_TYPES,
     AI_MAX_RETRIES,
     AI_RETRY_DELAY,
-    LEAVE_ANNOUNCEMENT_CHANNEL_IDS
+    LEAVE_ANNOUNCEMENT_CHANNEL_IDS,
+    LEAVE_ALLOWED_ROLES
 )
 from app.ai.ai_select import create_primary_agent, create_general_agent, create_reminder_agent, create_leave_agent
 from app.ai.classifier import MessageClassifier
@@ -112,203 +113,235 @@ class AIHandler:
         Get a streaming response from the AI.
         First classifies the message type, then handles it accordingly.
         """
-        await self._ensure_services()
-        
-        # 先進行訊息分類
-        message_type = await self._classifier.classify_message(message)
-        print(f"Message classified as: {message_type}")
-        
-        # 如果需要搜尋，先獲取搜尋結果
-        search_context = ""
-        if message_type == MESSAGE_TYPES['SEARCH']:
-            search_context = await self._search.search(context)
-            if context:
-                context = f"\n-------------------\n\n問題：\n{context}\n\n搜尋結果：\n{search_context}\n\n----------------請你根據此搜尋結果回應使用者的問題。"
-            else:
-                context = f"\n搜尋結果：\n{search_context}"
+        try:
+            await self._ensure_services()
             
-            message += context
-        
-        # 根據消息類型選擇使用的 agent
-        if message_type == MESSAGE_TYPES['SEARCH']:
-            agent = self._general_agent
-            print("使用 general agent 回應")
-        elif message_type == MESSAGE_TYPES['REMINDER']:
-            agent = self._reminder_agent
-            print("使用 reminder agent 回應")
-        elif message_type == MESSAGE_TYPES['LEAVE']:
-            agent = self._leave_agent
-            print("使用 leave agent 回應")
-        else:
-            agent = self._crazy_agent
-            print("使用 crazy agent 回應")
-
-        response_buffer = ""
-        for attempt in range(AI_MAX_RETRIES):
-            try:
-                async with agent.run_stream(message) as result:
-                    async for chunk in result.stream_text(delta=True):
-                        response_buffer += chunk
-                        # 清理回應中的命令標記
-                        cleaned_chunk = self._clean_response(chunk)
-                        if cleaned_chunk:
-                            yield cleaned_chunk
-                        
-                # 如果是提醒類型，解析並處理提醒相關命令
-                if message_type == MESSAGE_TYPES['REMINDER'] and self._reminder_manager:
-                    # 允許處理多個命令
-                    while True:
-                        reminder_info = self._reminder_manager.parse_reminder(response_buffer)
-                        if not reminder_info:
-                            break
-                            
-                        command_type, time_str, task, matched_command = reminder_info
-                        
-                        if command_type == 'add':
-                            try:
-                                reminder_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
-                                self._reminder_manager.add_reminder(
-                                    user_id, channel_id, guild_id, reminder_time, task
-                                )
-                                print(f"Added reminder: {time_str} - {task}")
-                            except ValueError as e:
-                                print(f"Error parsing reminder time: {str(e)}")
-                                
-                        elif command_type == 'list':
-                            # 不要讓 AI 自己列出清單，而是使用系統格式
-                            reminders = self._reminder_manager.get_user_reminders(user_id, guild_id)
-                            formatted_list = self._format_reminder_list(reminders)
-                            yield f"\n{formatted_list}"
-                            
-                            # 將提醒清單添加到 AI 的輸入中，讓 AI 可以繼續處理後續命令
-                            message += f"\n\n以下是您目前所有的提醒事項：\n{formatted_list}"
-                            
-                            # 重新調用 AI，讓它處理後續命令
-                            async with agent.run_stream(message) as result:
-                                async for chunk in result.stream_text(delta=True):
-                                    response_buffer += chunk
-                                    cleaned_chunk = self._clean_response(chunk)
-                                    if cleaned_chunk:
-                                        yield cleaned_chunk
-                                        
-                        elif command_type == 'delete':
-                            # 根據刪除命令的條件（時間和/或任務內容）查找匹配的提醒
-                            matching_reminders = self._reminder_manager.find_reminders(
-                                user_id, guild_id, task if task else None, time_str if time_str else None
-                            )
-                            
-                            if not matching_reminders:
-                                yield "\n找不到符合的提醒事項，請確認您的刪除條件。"
-                            else:
-                                yield "\n根據您的刪除條件，找到以下提醒："
-                                for reminder in matching_reminders:
-                                    formatted_time = reminder['time'].strftime('%Y-%m-%d %H:%M')
-                                    yield f"\n- {formatted_time} - {reminder['task']}"
-                                    
-                                    # 刪除並顯示刪除結果
-                                    if self._reminder_manager.delete_reminder_by_id(user_id, guild_id, reminder['id']):
-                                        yield f"\n✅ 已刪除提醒：{formatted_time} - {reminder['task']}"
-                                    else:
-                                        yield f"\n❌ 刪除提醒失敗：{formatted_time} - {reminder['task']}"
-                                        
-                        # 移除已處理的命令
-                        response_buffer = response_buffer.replace(matched_command, '')
-
-                # 如果是請假類型，解析並處理請假相關命令
-                elif message_type == MESSAGE_TYPES['LEAVE'] and self._leave_manager:
-                    # 允許處理多個命令
-                    while True:
-                        # 使用正則表達式找出所有命令
-                        leave_match = re.search(r'\[LEAVE\](.*?)\[/LEAVE\]', response_buffer, re.DOTALL)
-                        list_match = re.search(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response_buffer, re.DOTALL)
-                        delete_match = re.search(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response_buffer, re.DOTALL)
-                        
-                        if leave_match:
-                            command_text = leave_match.group(1).strip()
-                            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-                            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-                            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
-                            
-                            if start_date and end_date:
-                                start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
-                                end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
-                                reason_text = reason.group(1) if reason else None
-                                
-                                if self._leave_manager.add_leave(
-                                    user_id, guild_id, start, end, reason_text
-                                ):
-                                    yield "\n✅ 已為您申請請假"
-                                    # 發送請假公告
-                                    await self.send_leave_announcement(
-                                        user_id,
-                                        guild_id,
-                                        start,
-                                        end,
-                                        reason_text
-                                    )
-                                else:
-                                    yield "\n❌ 請假申請失敗，可能與現有請假時間重疊"
-                                    
-                            response_buffer = response_buffer.replace(leave_match.group(0), '')
-                            
-                        elif list_match:
-                            leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
-                            if not leaves:
-                                yield "\n📅 您目前沒有請假記錄。"
-                            else:
-                                yield "\n📅 您的請假記錄：\n\n"
-                                for leave in leaves:
-                                    yield (
-                                        f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
-                                        f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
-                                    )
-                                    if leave['reason']:
-                                        yield f"📝 原因：{leave['reason']}\n"
-                                    yield "\n"
-                                    
-                            response_buffer = response_buffer.replace(list_match.group(0), '')
-                            
-                        elif delete_match:
-                            command_text = delete_match.group(1).strip()
-                            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-                            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-                            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
-                            
-                            leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
-                            deleted_count = 0
-                            
-                            for leave in leaves:
-                                should_delete = True
-                                
-                                if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
-                                    should_delete = False
-                                if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
-                                    should_delete = False
-                                if reason and leave['reason'] != reason.group(1):
-                                    should_delete = False
-                                    
-                                if should_delete:
-                                    if self._leave_manager.delete_leave(leave['id'], user_id, guild_id):
-                                        deleted_count += 1
-                            
-                            if deleted_count > 0:
-                                yield f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
-                            else:
-                                yield "\n❌ 找不到符合條件的請假記錄"
-                                
-                            response_buffer = response_buffer.replace(delete_match.group(0), '')
-                            
-                        else:
-                            break
-                return
-                
-            except Exception as e:
-                if attempt == AI_MAX_RETRIES - 1:
-                    print(f"AI response failed after {AI_MAX_RETRIES} attempts: {str(e)}")
-                    yield f"抱歉，AI 服務暫時無法回應，請稍後再試。"
+            # 檢查是否為請假相關的訊息
+            message_type = await self._classifier.classify_message(message)
+            if message_type == MESSAGE_TYPES['LEAVE']:
+                # 檢查用戶是否有請假權限
+                if not self._bot or not guild_id or not user_id:
+                    yield "❌ 無法處理請假請求，請確保在伺服器中使用此功能。"
                     return
-                print(f"AI response attempt {attempt + 1} failed: {str(e)}")
-                await asyncio.sleep(AI_RETRY_DELAY)
+                
+                guild = self._bot.get_guild(guild_id)
+                if not guild:
+                    yield "❌ 無法找到伺服器資訊。"
+                    return
+                    
+                member = guild.get_member(user_id)
+                if not member:
+                    yield "❌ 無法找到您的成員資訊。"
+                    return
+                
+                # 檢查是否有允許的身份組
+                if not any(role.id in LEAVE_ALLOWED_ROLES for role in member.roles):
+                    yield "❌ 您沒有使用請假功能的權限。需要特定的身份組才能使用此功能。"
+                    return
+
+            # 先進行訊息分類
+            message_type = await self._classifier.classify_message(message)
+            print(f"Message classified as: {message_type}")
+            
+            # 如果需要搜尋，先獲取搜尋結果
+            search_context = ""
+            if message_type == MESSAGE_TYPES['SEARCH']:
+                search_context = await self._search.search(context)
+                if context:
+                    context = f"\n-------------------\n\n問題：\n{context}\n\n搜尋結果：\n{search_context}\n\n----------------請你根據此搜尋結果回應使用者的問題。"
+                else:
+                    context = f"\n搜尋結果：\n{search_context}"
+                
+                message += context
+            
+            # 根據消息類型選擇使用的 agent
+            agent = None
+            if message_type == MESSAGE_TYPES['SEARCH']:
+                agent = self._general_agent
+                print("使用 general agent 回應")
+            elif message_type == MESSAGE_TYPES['REMINDER']:
+                agent = self._reminder_agent
+                print("使用 reminder agent 回應")
+            elif message_type == MESSAGE_TYPES['LEAVE']:
+                agent = self._leave_agent
+                print("使用 leave agent 回應")
+            else:
+                agent = self._crazy_agent
+                print("使用 crazy agent 回應")
+
+            response_buffer = ""
+            for attempt in range(AI_MAX_RETRIES):
+                try:
+                    async with agent.run_stream(message) as result:
+                        async for chunk in result.stream_text(delta=True):
+                            response_buffer += chunk
+                            # 清理回應中的命令標記
+                            cleaned_chunk = self._clean_response(chunk)
+                            if cleaned_chunk:
+                                yield cleaned_chunk
+                            
+                    # 如果是提醒類型，解析並處理提醒相關命令
+                    if message_type == MESSAGE_TYPES['REMINDER'] and self._reminder_manager:
+                        # 允許處理多個命令
+                        while True:
+                            reminder_info = self._reminder_manager.parse_reminder(response_buffer)
+                            if not reminder_info:
+                                break
+                                
+                            command_type, time_str, task, matched_command = reminder_info
+                            
+                            if command_type == 'add':
+                                try:
+                                    reminder_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+                                    self._reminder_manager.add_reminder(
+                                        user_id, channel_id, guild_id, reminder_time, task
+                                    )
+                                    print(f"Added reminder: {time_str} - {task}")
+                                except ValueError as e:
+                                    print(f"Error parsing reminder time: {str(e)}")
+                                    
+                            elif command_type == 'list':
+                                # 不要讓 AI 自己列出清單，而是使用系統格式
+                                reminders = self._reminder_manager.get_user_reminders(user_id, guild_id)
+                                formatted_list = self._format_reminder_list(reminders)
+                                yield f"\n{formatted_list}"
+                                
+                                # 將提醒清單添加到 AI 的輸入中，讓 AI 可以繼續處理後續命令
+                                message += f"\n\n以下是您目前所有的提醒事項：\n{formatted_list}"
+                                
+                                # 重新調用 AI，讓它處理後續命令
+                                async with agent.run_stream(message) as result:
+                                    async for chunk in result.stream_text(delta=True):
+                                        response_buffer += chunk
+                                        cleaned_chunk = self._clean_response(chunk)
+                                        if cleaned_chunk:
+                                            yield cleaned_chunk
+                                            
+                            elif command_type == 'delete':
+                                # 根據刪除命令的條件（時間和/或任務內容）查找匹配的提醒
+                                matching_reminders = self._reminder_manager.find_reminders(
+                                    user_id, guild_id, task if task else None, time_str if time_str else None
+                                )
+                                
+                                if not matching_reminders:
+                                    yield "\n找不到符合的提醒事項，請確認您的刪除條件。"
+                                else:
+                                    yield "\n根據您的刪除條件，找到以下提醒："
+                                    for reminder in matching_reminders:
+                                        formatted_time = reminder['time'].strftime('%Y-%m-%d %H:%M')
+                                        yield f"\n- {formatted_time} - {reminder['task']}"
+                                        
+                                        # 刪除並顯示刪除結果
+                                        if self._reminder_manager.delete_reminder_by_id(user_id, guild_id, reminder['id']):
+                                            yield f"\n✅ 已刪除提醒：{formatted_time} - {reminder['task']}"
+                                        else:
+                                            yield f"\n❌ 刪除提醒失敗：{formatted_time} - {reminder['task']}"
+                                            
+                            # 移除已處理的命令
+                            response_buffer = response_buffer.replace(matched_command, '')
+
+                    # 如果是請假類型，解析並處理請假相關命令
+                    elif message_type == MESSAGE_TYPES['LEAVE'] and self._leave_manager:
+                        # 允許處理多個命令
+                        while True:
+                            # 使用正則表達式找出所有命令
+                            leave_match = re.search(r'\[LEAVE\](.*?)\[/LEAVE\]', response_buffer, re.DOTALL)
+                            list_match = re.search(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response_buffer, re.DOTALL)
+                            delete_match = re.search(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response_buffer, re.DOTALL)
+                            
+                            if leave_match:
+                                command_text = leave_match.group(1).strip()
+                                start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+                                end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+                                reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+                                deputy = re.search(r'DEPUTY=<@(\d+)>', command_text)
+                                
+                                if start_date and end_date:
+                                    start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
+                                    end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
+                                    reason_text = reason.group(1) if reason else None
+                                    deputy_id = int(deputy.group(1)) if deputy else None
+                                    
+                                    if self._leave_manager.add_leave(
+                                        user_id, guild_id, start, end, reason_text, deputy_id
+                                    ):
+                                        yield "\n✅ 已為您申請請假"
+                                        # 發送請假公告
+                                        await self.send_leave_announcement(
+                                            user_id,
+                                            guild_id,
+                                            start,
+                                            end,
+                                            reason_text,
+                                            deputy_id
+                                        )
+                                    else:
+                                        yield "\n❌ 請假申請失敗，可能與現有請假時間重疊"
+                                        
+                                response_buffer = response_buffer.replace(leave_match.group(0), '')
+                                
+                            elif list_match:
+                                leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
+                                if not leaves:
+                                    yield "\n📅 您目前沒有請假記錄。"
+                                else:
+                                    yield "\n📅 您的請假記錄：\n\n"
+                                    for leave in leaves:
+                                        yield (
+                                            f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
+                                            f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
+                                        )
+                                        if leave['reason']:
+                                            yield f"📝 原因：{leave['reason']}\n"
+                                        yield "\n"
+                                        
+                                response_buffer = response_buffer.replace(list_match.group(0), '')
+                                
+                            elif delete_match:
+                                command_text = delete_match.group(1).strip()
+                                start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+                                end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+                                reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+                                
+                                leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
+                                deleted_count = 0
+                                
+                                for leave in leaves:
+                                    should_delete = True
+                                    
+                                    if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
+                                        should_delete = False
+                                    if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
+                                        should_delete = False
+                                    if reason and leave['reason'] != reason.group(1):
+                                        should_delete = False
+                                        
+                                    if should_delete:
+                                        if self._leave_manager.delete_leave(leave['id'], user_id, guild_id):
+                                            deleted_count += 1
+                                
+                                if deleted_count > 0:
+                                    yield f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
+                                else:
+                                    yield "\n❌ 找不到符合條件的請假記錄"
+                                    
+                                response_buffer = response_buffer.replace(delete_match.group(0), '')
+                                
+                            else:
+                                break
+                    return
+                    
+                except Exception as e:
+                    if attempt == AI_MAX_RETRIES - 1:
+                        print(f"AI response failed after {AI_MAX_RETRIES} attempts: {str(e)}")
+                        yield f"抱歉，AI 服務暫時無法回應，請稍後再試。"
+                        return
+                    print(f"AI response attempt {attempt + 1} failed: {str(e)}")
+                    await asyncio.sleep(AI_RETRY_DELAY)
+
+        except Exception as e:
+            print(f"處理訊息時發生錯誤：{str(e)}")
+            yield f"抱歉，AI 服務暫時無法回應，請稍後再試。"
 
     async def handle_command(self, command_type: str, command_data: dict) -> AsyncGenerator[str, None]:
         if command_type == "list_reminders":
@@ -341,7 +374,7 @@ class AIHandler:
             async for msg in self.handle_command("list_reminders", {"is_delete_flow": True}):
                 yield msg
 
-    async def send_leave_announcement(self, user_id: int, guild_id: int, start_date: datetime, end_date: datetime, reason: str = None):
+    async def send_leave_announcement(self, user_id: int, guild_id: int, start_date: datetime, end_date: datetime, reason: str = None, deputy_id: int = None):
         """發送請假公告到指定頻道"""
         if not self._bot or not LEAVE_ANNOUNCEMENT_CHANNEL_IDS:
             return
@@ -387,6 +420,16 @@ class AIHandler:
                 inline=False
             )
 
+        # 如果有代理人，添加代理人資訊
+        if deputy_id:
+            deputy = guild.get_member(deputy_id)
+            if deputy:
+                embed.add_field(
+                    name="👥 代理人",
+                    value=deputy.mention,
+                    inline=False
+                )
+
         # 設置請假者的頭像
         embed.set_thumbnail(url=member.display_avatar.url)
         
@@ -407,20 +450,23 @@ class AIHandler:
                     )
                     
                     # 在討論串發送初始訊息
-                    await thread.send(
+                    initial_message = (
                         f"這是 {member.mention} 的請假討論串。\n"
-                        f"請假期間：{start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}\n"
-                        f"如果有任何事情要找 {member.mention}，請於此討論串留言。"
+                        f"請假期間：{start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}"
                     )
+                    if deputy_id:
+                        deputy = guild.get_member(deputy_id)
+                        if deputy:
+                            initial_message += f"\n代理人：{deputy.mention}"
+                    initial_message += f"\n如果有任何事情要找 {member.mention}，請於此討論串留言。"
+                    
+                    await thread.send(initial_message)
                     
                     # 獲取最新的請假記錄
                     leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
                     if leaves:
-                        # 找到最新的請假記錄（應該是剛剛添加的）
-                        latest_leave = leaves[0]  # 假設請假記錄是按時間倒序排列的
-                        # 更新公告訊息ID和頻道ID
+                        latest_leave = leaves[0]
                         self._leave_manager.update_announcement_message(latest_leave['id'], msg.id, channel_id)
-                        # 更新討論串ID
                         self._leave_manager.update_thread_id(latest_leave['id'], thread.id)
                         print(f"已更新請假記錄 {latest_leave['id']} 的討論串ID：{thread.id}")
                         
@@ -540,12 +586,20 @@ class AIHandler:
             
             # 只有在最近沒有提醒過的情況下才回覆
             if not has_recent_notification:
-                await message.reply(
+                reply_message = (
                     f"⚠️ {mention.display_name} 目前正在請假中\n"
                     f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
                     f"{leave_info['end_date'].strftime('%Y-%m-%d')}\n"
-                    f"💬 請在請假討論串留言：{thread_url}"
                 )
+                
+                # 如果有代理人，加入代理人資訊
+                if leave_info.get('deputy_id'):
+                    deputy = message.guild.get_member(leave_info['deputy_id'])
+                    if deputy:
+                        reply_message += f"👥 代理人：{deputy.mention}\n"
+                
+                reply_message += f"💬 請在請假討論串留言：{thread_url}"
+                await message.reply(reply_message)
             
             # 在討論串中發送通知
             try:
@@ -584,12 +638,21 @@ class AIHandler:
                 if len(preview_lines) > 3:
                     preview = '\n'.join(preview_lines[:3]) + "\n..."
                 
-                await thread.send(
+                thread_message = (
+                    f"----------------------------------\n"
                     f"⚠️ {message.author.mention} 在 {message.channel.mention} "
                     f"提及了 {mention.mention}\n"
                     f"🔗 原始訊息：{message_url}\n"
                     f"```\n{preview}\n```"
                 )
+                
+                # 如果有代理人，也要提及代理人
+                if leave_info.get('deputy_id'):
+                    deputy = message.guild.get_member(leave_info['deputy_id'])
+                    if deputy:
+                        thread_message = thread_message + f"👥 cc: {deputy.mention}"
+                
+                await thread.send(thread_message)
                 print(f"已在討論串中發送通知")
                 
             except discord.NotFound:
