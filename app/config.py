@@ -101,8 +101,8 @@ NO_HISTORY_PROMPT_TEMPLATE = "有人說了：{content}\n\n請以一個活潑的�
 MESSAGE_TYPES = {
     'SEARCH': 'search',      # 需要搜尋資訊
     'CHAT': 'chat',         # 一般閒聊
-    'TASK': 'task',        # 要求執行任務
     'REMINDER': 'reminder', # 設定提醒
+    'LEAVE': 'leave',       # 請假相關
     'UNKNOWN': 'unknown'    # 無法分類
 }
 
@@ -110,3 +110,8 @@ MESSAGE_TYPES = {
 REMINDER_CHECK_INTERVAL = 60  # 檢查提醒的間隔（秒）
 REMINDER_DB_PATH = "data/reminders.db"  # 提醒資料庫路徑
 WELCOMED_MEMBERS_DB_PATH = "data/welcomed_members.db"  # 已歡迎成員資料庫路徑
+
+# Leave Configuration
+LEAVE_DB_PATH = "data/leaves.db"  # 請假資料庫路徑
+LEAVE_ALLOWED_ROLES = [int(id.strip()) for id in os.getenv('LEAVE_ALLOWED_ROLES', '').split(',') if id.strip()]  # 允許使用請假指令的身份組 ID 列表
+LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('LEAVE_ANNOUNCEMENT_CHANNEL_IDS', '').split(',') if id.strip()]  # 請假公告頻道 ID 列表

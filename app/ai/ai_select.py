@@ -10,6 +10,7 @@ from app.ai.agents.crazy_talk import agent_crazy
 from app.ai.agents.classifier import agent_classifier
 from app.ai.agents.general import agent_general
 from app.ai.agents.reminder import agent_reminder
+from app.ai.agents.leave import agent_leave
 
 # TODO: Implement the ai_select_init, get_model (model getter) functions
 
@@ -58,6 +59,12 @@ async def create_reminder_agent() -> Agent:
     """Create a reminder agent for handling reminders."""
     model = get_primary_model()
     agent = await agent_reminder(model)
+    return agent
+
+async def create_leave_agent() -> Agent:
+    """Create a leave agent for handling leave requests."""
+    model = get_primary_model()
+    agent = await agent_leave(model)
     return agent
 
 async def create_primary_agent():

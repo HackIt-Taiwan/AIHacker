@@ -5,6 +5,8 @@ from collections import defaultdict
 import time
 import random
 from typing import Dict, List
+from datetime import datetime, timedelta
+import re
 
 from app.config import (
     DISCORD_TOKEN, TYPING_INTERVAL, STREAM_CHUNK_SIZE,
@@ -15,12 +17,15 @@ from app.config import (
     BOT_RANDOM_THINKING_MESSAGE, CHAT_HISTORY_TARGET_CHARS,
     CHAT_HISTORY_MAX_MESSAGES, HISTORY_PROMPT_TEMPLATE,
     RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
-    WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE
+    WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
+    LEAVE_ALLOWED_ROLES
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
 from app.reminder_manager import ReminderManager
 from app.welcomed_members_db import WelcomedMembersDB
+from app.leave_manager import LeaveManager
+from app.ai.agents.leave import agent_leave
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -36,6 +41,7 @@ message_timestamps: Dict[int, List[float]] = defaultdict(list)
 reminder_manager = None
 ai_handler = None
 welcomed_members_db = None
+leave_manager = None
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -86,18 +92,24 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
-    global reminder_manager, ai_handler, welcomed_members_db
+    global reminder_manager, ai_handler, welcomed_members_db, leave_manager
     print(f'{bot.user} has connected to Discord!')
+    
+    # 註冊斜線命令
+    try:
+        print("開始註冊斜線命令...")
+        await bot.tree.sync()
+        print("斜線命令註冊完成！")
+    except Exception as e:
+        print(f"註冊斜線命令時發生錯誤: {str(e)}")
+    
     await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
     
-    # Initialize reminder manager
+    # Initialize managers
     reminder_manager = ReminderManager(bot)
     reminder_manager.start()
-    
-    # Initialize AI handler
-    ai_handler = AIHandler(reminder_manager)
-    
-    # Initialize welcomed members database
+    leave_manager = LeaveManager()
+    ai_handler = AIHandler(reminder_manager, leave_manager, bot)
     welcomed_members_db = WelcomedMembersDB()
 
 # 新增成員加入事件處理
@@ -109,7 +121,7 @@ async def on_member_join(member):
     global ai_handler, welcomed_members_db
     if ai_handler is None:
         print("初始化 AI handler")
-        ai_handler = AIHandler(reminder_manager)
+        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
     
     if welcomed_members_db is None:
         print("初始化歡迎資料庫")
@@ -270,15 +282,29 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    # Process commands first
+    await bot.process_commands(message)
+    
+    # Check for mentions
+    for mention in message.mentions:
+        # 檢查被提及的用戶是否正在請假
+        leave_info = leave_manager.get_active_leave(mention.id, message.guild.id)
+        if leave_info:
+            await message.reply(
+                f"⚠️ {mention.display_name} 目前正在請假中\n"
+                f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
+            )
+            continue
+
     # Check if the bot was mentioned
     if bot.user in message.mentions:
         await handle_mention(message)
     # Random reply chance
-    elif (len(message.content) >= MIN_MESSAGE_LENGTH and  # 訊息夠長
-          not message.content.startswith(IGNORED_PREFIXES) and  # 不是命令
-          not message.author.bot and  # 不是機器人
-          random.random() < RANDOM_REPLY_CHANCE):  # 隨機觸發
-        
+    elif (len(message.content) >= MIN_MESSAGE_LENGTH and
+          not message.content.startswith(IGNORED_PREFIXES) and
+          not message.author.bot and
+          random.random() < RANDOM_REPLY_CHANCE):
         print(f"觸發隨機回覆，訊息: {message.content}")
         await handle_ai_response(message, is_random=True)
 
@@ -400,6 +426,114 @@ async def handle_ai_response(message, content=None, is_random=False):
 async def on_error(event, *args, **kwargs):
     print(f'Error in {event}:', flush=True)
     raise
+
+def has_leave_permission(member: discord.Member) -> bool:
+    """檢查成員是否擁有請假權限"""
+    return any(role.id in LEAVE_ALLOWED_ROLES for role in member.roles)
+
+@bot.tree.command(name="請假", description="使用自然語言管理請假")
+async def leave_nl(interaction: discord.Interaction, 請求: str):
+    """使用自然語言管理請假"""
+    if not has_leave_permission(interaction.user):
+        await interaction.response.send_message(
+            "❌ 您沒有使用請假指令的權限。需要特定的身份組才能使用此指令。",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
+    
+    try:
+        # 獲取 AI 回應
+        agent = await agent_leave(ai_handler.model)
+        response = await agent.agenerate(請求)
+        
+        # 解析回應中的命令
+        message = ""
+        commands = []
+        
+        # 使用正則表達式找出所有命令
+        leave_matches = re.finditer(r'\[LEAVE\](.*?)\[/LEAVE\]', response, re.DOTALL)
+        list_matches = re.finditer(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response, re.DOTALL)
+        delete_matches = re.finditer(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response, re.DOTALL)
+        
+        # 處理一般文字（移除所有命令）
+        message = re.sub(r'\[(LEAVE|LIST_LEAVES|DELETE_LEAVE)\].*?\[/\1\]', '', response, flags=re.DOTALL)
+        message = message.strip()
+        
+        # 處理請假命令
+        for match in leave_matches:
+            command_text = match.group(1).strip()
+            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+            
+            if start_date and end_date:
+                start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
+                end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
+                reason_text = reason.group(1) if reason else None
+                
+                if leave_manager.add_leave(
+                    interaction.user.id,
+                    interaction.guild.id,
+                    start,
+                    end,
+                    reason_text
+                ):
+                    message += "\n✅ 已為您申請請假"
+                else:
+                    message += "\n❌ 請假申請失敗，可能與現有請假時間重疊"
+        
+        # 處理查看請假命令
+        for match in list_matches:
+            leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
+            if not leaves:
+                message += f"\n📅 {interaction.user.display_name} 目前沒有請假記錄。"
+            else:
+                message += f"\n📅 {interaction.user.display_name} 的請假記錄：\n\n"
+                for leave in leaves:
+                    message += (
+                        f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
+                        f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
+                    )
+                    if leave['reason']:
+                        message += f"📝 原因：{leave['reason']}\n"
+                    message += "\n"
+        
+        # 處理刪除請假命令
+        for match in delete_matches:
+            command_text = match.group(1).strip()
+            start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+            end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
+            reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
+            
+            leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
+            deleted_count = 0
+            
+            for leave in leaves:
+                should_delete = True
+                
+                if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
+                    should_delete = False
+                if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
+                    should_delete = False
+                if reason and leave['reason'] != reason.group(1):
+                    should_delete = False
+                    
+                if should_delete:
+                    if leave_manager.delete_leave(leave['id'], interaction.user.id, interaction.guild.id):
+                        deleted_count += 1
+            
+            if deleted_count > 0:
+                message += f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
+            else:
+                message += "\n❌ 找不到符合條件的請假記錄"
+        
+        # 發送回應
+        await interaction.followup.send(message.strip())
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ 處理請假請求時發生錯誤：{str(e)}", ephemeral=True)
 
 def main():
     try:
