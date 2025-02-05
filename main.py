@@ -112,6 +112,11 @@ async def on_ready():
     ai_handler = AIHandler(reminder_manager, leave_manager, bot)
     welcomed_members_db = WelcomedMembersDB()
 
+    # 啟動請假公告更新器
+    print("啟動請假公告更新器...")
+    asyncio.create_task(ai_handler.start_leave_announcement_updater())
+    print("請假公告更新器已啟動")
+
 # 新增成員加入事件處理
 @bot.event
 async def on_member_join(member):
@@ -285,17 +290,18 @@ async def on_message(message):
     # Process commands first
     await bot.process_commands(message)
     
-    # Check for mentions
-    for mention in message.mentions:
-        # 檢查被提及的用戶是否正在請假
-        leave_info = leave_manager.get_active_leave(mention.id, message.guild.id)
-        if leave_info:
-            await message.reply(
-                f"⚠️ {mention.display_name} 目前正在請假中\n"
-                f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
-                f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
-            )
-            continue
+    # Check for mentions, but only if the message author is not a bot
+    if not message.author.bot:
+        for mention in message.mentions:
+            # 檢查被提及的用戶是否正在請假
+            leave_info = leave_manager.get_active_leave(mention.id, message.guild.id)
+            if leave_info:
+                await message.reply(
+                    f"⚠️ {mention.display_name} 目前正在請假中\n"
+                    f"📅 請假期間：{leave_info['start_date'].strftime('%Y-%m-%d')} 至 "
+                    f"{leave_info['end_date'].strftime('%Y-%m-%d')}"
+                )
+                continue
 
     # Check if the bot was mentioned
     if bot.user in message.mentions:

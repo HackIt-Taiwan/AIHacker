@@ -354,11 +354,22 @@ class AIHandler:
         if not member:
             return
 
+        # 檢查請假狀態
+        status = self._leave_manager.get_leave_status(start_date, end_date)
+        
+        # 根據狀態設置顏色
+        if status == 'pending':
+            color = discord.Color.light_grey()
+        elif status == 'active':
+            color = discord.Color.blue()
+        else:  # expired
+            color = discord.Color.dark_grey()
+
         # 創建 embed 物件
         embed = discord.Embed(
             title="📢 請假公告",
             description=f"{member.mention} 已申請請假",
-            color=discord.Color.blue(),
+            color=color,
             timestamp=datetime.now()
         )
 
@@ -387,6 +398,84 @@ class AIHandler:
             try:
                 channel = self._bot.get_channel(channel_id)
                 if channel and isinstance(channel, discord.TextChannel):
-                    await channel.send(embed=embed)
+                    msg = await channel.send(embed=embed)
+                    # 獲取最新的請假記錄
+                    leaves = self._leave_manager.get_user_leaves(user_id, guild_id)
+                    if leaves:
+                        # 找到最新的請假記錄（應該是剛剛添加的）
+                        latest_leave = leaves[0]  # 假設請假記錄是按時間倒序排列的
+                        # 更新公告訊息ID
+                        self._leave_manager.update_announcement_message(latest_leave['id'], msg.id, channel_id)
             except Exception as e:
                 print(f"發送請假公告到頻道 {channel_id} 時發生錯誤：{str(e)}")
+
+    async def update_leave_announcements(self):
+        """更新所有請假公告的狀態"""
+        try:
+            # 獲取所有活動的請假記錄
+            leaves = self._leave_manager.get_all_active_leaves()
+            
+            for leave in leaves:
+                # 檢查請假狀態
+                status = self._leave_manager.get_leave_status(
+                    leave['start_date'],
+                    leave['end_date']
+                )
+                
+                # 獲取公告訊息資訊
+                if not leave['announcement_msg_id'] or not leave['announcement_channel_id']:
+                    continue
+                    
+                channel = self._bot.get_channel(leave['announcement_channel_id'])
+                if not channel:
+                    continue
+                    
+                try:
+                    message = await channel.fetch_message(leave['announcement_msg_id'])
+                    if not message:
+                        continue
+                        
+                    if status == 'expired':
+                        # 將過期的請假記錄轉換為純文字格式
+                        guild = self._bot.get_guild(leave['guild_id'])
+                        if not guild:
+                            continue
+                            
+                        member = guild.get_member(leave['user_id'])
+                        if not member:
+                            continue
+                            
+                        formatted_text = (
+                            f"🗓️ **已結束的請假記錄** | "
+                            f"{member.display_name} | "
+                            f"{leave['start_date'].strftime('%Y-%m-%d')} → "
+                            f"{leave['end_date'].strftime('%Y-%m-%d')}"
+                        )
+                        if leave['reason']:
+                            formatted_text += f" | 原因：{leave['reason']}"
+                            
+                        await message.edit(content=formatted_text, embed=None)
+                    else:
+                        # 更新 embed 顏色
+                        embed = message.embeds[0]
+                        if status == 'pending':
+                            embed.color = discord.Color.light_grey()
+                        else:  # active
+                            embed.color = discord.Color.blue()
+                        await message.edit(embed=embed)
+                        
+                except discord.NotFound:
+                    print(f"無法找到訊息 ID: {leave['announcement_msg_id']}")
+                except discord.Forbidden:
+                    print(f"沒有權限編輯訊息 ID: {leave['announcement_msg_id']}")
+                except Exception as e:
+                    print(f"更新請假公告時發生錯誤：{str(e)}")
+                    
+        except Exception as e:
+            print(f"更新請假公告時發生錯誤：{str(e)}")
+
+    async def start_leave_announcement_updater(self):
+        """開始定期更新請假公告"""
+        while True:
+            await self.update_leave_announcements()
+            await asyncio.sleep(3600)  # 每小時檢查一次
