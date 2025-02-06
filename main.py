@@ -102,9 +102,7 @@ async def on_ready():
     #     print("斜線命令註冊完成！")
     # except Exception as e:
     #     print(f"註冊斜線命令時發生錯誤: {str(e)}")
-    
-    await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
-    
+        
     # Initialize managers
     reminder_manager = ReminderManager(bot)
     reminder_manager.start()
@@ -116,6 +114,14 @@ async def on_ready():
     print("啟動請假公告更新器...")
     asyncio.create_task(ai_handler.start_leave_announcement_updater())
     print("請假公告更新器已啟動")
+
+    # 啟動歡迎訊息重試機制
+    print("啟動歡迎訊息重試機制...")
+    asyncio.create_task(retry_welcome_messages())
+    print("歡迎訊息重試機制已啟動")
+
+    await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
+
 
 # 新增成員加入事件處理
 @bot.event
@@ -203,13 +209,19 @@ async def on_member_join(member):
                         await channel.send(f"{member.mention} {full_response}")
                         welcome_sent = True
                         response_received = True
+                        # 標記歡迎成功
+                        welcomed_members_db.mark_welcome_success(member.id, member.guild.id)
                     else:
                         print("AI 沒有生成任何回應")
+                        # 標記歡迎失敗
+                        welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
             except discord.Forbidden as e:
                 print(f"發送訊息時權限錯誤: {str(e)}")
+                welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
                 continue
             except Exception as e:
                 print(f"在頻道 {channel_id} 生成/發送歡迎訊息時發生錯誤: {str(e)}")
+                welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
                 continue
             
             if welcome_sent:
@@ -218,6 +230,7 @@ async def on_member_join(member):
             
         except Exception as e:
             print(f"處理頻道 {channel_id} 時發生錯誤: {str(e)}")
+            welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
             continue
     
     # 如果所有配置的頻道都失敗了，且這是第一次或第二次加入，嘗試找一個可用的文字頻道
@@ -234,11 +247,14 @@ async def on_member_join(member):
                 # 發送預設歡迎訊息
                 await fallback_channel.send(DEFAULT_WELCOME_MESSAGE.format(member=member.mention))
                 print(f"使用備用頻道 {fallback_channel.id} 發送歡迎訊息成功")
+                welcomed_members_db.mark_welcome_success(member.id, member.guild.id)
             else:
                 print("找不到任何可用的頻道來發送歡迎訊息")
+                welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
                 
         except Exception as e:
             print(f"使用備用頻道發送歡迎訊息時發生錯誤: {str(e)}")
+            welcomed_members_db.mark_welcome_failed(member.id, member.guild.id)
     
     print("成員加入事件處理完成")
 
@@ -433,109 +449,38 @@ def has_leave_permission(member: discord.Member) -> bool:
     """檢查成員是否擁有請假權限"""
     return any(role.id in LEAVE_ALLOWED_ROLES for role in member.roles)
 
-# @bot.tree.command(name="請假", description="使用自然語言管理請假")
-# async def leave_nl(interaction: discord.Interaction, 請求: str):
-#     """使用自然語言管理請假"""
-#     if not has_leave_permission(interaction.user):
-#         await interaction.response.send_message(
-#             "❌ 您沒有使用請假指令的權限。需要特定的身份組才能使用此指令。",
-#             ephemeral=True
-#         )
-#         return
+async def retry_welcome_messages():
+    """定期檢查並重試失敗的歡迎訊息"""
+    while True:
+        try:
+            if welcomed_members_db is None:
+                await asyncio.sleep(60)
+                continue
 
-#     await interaction.response.defer()
-    
-#     try:
-#         # 獲取 AI 回應
-#         agent = await agent_leave(ai_handler.model)
-#         response = await agent.agenerate(請求)
-        
-#         # 解析回應中的命令
-#         message = ""
-#         commands = []
-        
-#         # 使用正則表達式找出所有命令
-#         leave_matches = re.finditer(r'\[LEAVE\](.*?)\[/LEAVE\]', response, re.DOTALL)
-#         list_matches = re.finditer(r'\[LIST_LEAVES\](.*?)\[/LIST_LEAVES\]', response, re.DOTALL)
-#         delete_matches = re.finditer(r'\[DELETE_LEAVE\](.*?)\[/DELETE_LEAVE\]', response, re.DOTALL)
-        
-#         # 處理一般文字（移除所有命令）
-#         message = re.sub(r'\[(LEAVE|LIST_LEAVES|DELETE_LEAVE)\].*?\[/\1\]', '', response, flags=re.DOTALL)
-#         message = message.strip()
-        
-#         # 處理請假命令
-#         for match in leave_matches:
-#             command_text = match.group(1).strip()
-#             start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-#             end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-#             reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
-            
-#             if start_date and end_date:
-#                 start = datetime.strptime(start_date.group(1), '%Y-%m-%d')
-#                 end = datetime.strptime(end_date.group(1), '%Y-%m-%d')
-#                 reason_text = reason.group(1) if reason else None
-                
-#                 if leave_manager.add_leave(
-#                     interaction.user.id,
-#                     interaction.guild.id,
-#                     start,
-#                     end,
-#                     reason_text
-#                 ):
-#                     message += "\n✅ 已為您申請請假"
-#                 else:
-#                     message += "\n❌ 請假申請失敗，可能與現有請假時間重疊"
-        
-#         # 處理查看請假命令
-#         for match in list_matches:
-#             leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
-#             if not leaves:
-#                 message += f"\n📅 {interaction.user.display_name} 目前沒有請假記錄。"
-#             else:
-#                 message += f"\n📅 {interaction.user.display_name} 的請假記錄：\n\n"
-#                 for leave in leaves:
-#                     message += (
-#                         f"🔸 {leave['start_date'].strftime('%Y-%m-%d')} 至 "
-#                         f"{leave['end_date'].strftime('%Y-%m-%d')}\n"
-#                     )
-#                     if leave['reason']:
-#                         message += f"📝 原因：{leave['reason']}\n"
-#                     message += "\n"
-        
-#         # 處理刪除請假命令
-#         for match in delete_matches:
-#             command_text = match.group(1).strip()
-#             start_date = re.search(r'START_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-#             end_date = re.search(r'END_DATE=(\d{4}-\d{2}-\d{2})', command_text)
-#             reason = re.search(r'REASON=(.*?)(?:\n|$)', command_text)
-            
-#             leaves = leave_manager.get_user_leaves(interaction.user.id, interaction.guild.id)
-#             deleted_count = 0
-            
-#             for leave in leaves:
-#                 should_delete = True
-                
-#                 if start_date and leave['start_date'].strftime('%Y-%m-%d') != start_date.group(1):
-#                     should_delete = False
-#                 if end_date and leave['end_date'].strftime('%Y-%m-%d') != end_date.group(1):
-#                     should_delete = False
-#                 if reason and leave['reason'] != reason.group(1):
-#                     should_delete = False
+            pending_welcomes = welcomed_members_db.get_pending_welcomes()
+            for welcome in pending_welcomes:
+                try:
+                    guild = bot.get_guild(welcome['guild_id'])
+                    if not guild:
+                        print(f"無法找到伺服器 {welcome['guild_id']}")
+                        continue
+
+                    member = guild.get_member(welcome['user_id'])
+                    if not member:
+                        print(f"無法找到成員 {welcome['user_id']}")
+                        continue
+
+                    # 重新觸發歡迎流程
+                    await on_member_join(member)
                     
-#                 if should_delete:
-#                     if leave_manager.delete_leave(leave['id'], interaction.user.id, interaction.guild.id):
-#                         deleted_count += 1
+                except Exception as e:
+                    print(f"重試歡迎訊息時發生錯誤: {str(e)}")
+
+            await asyncio.sleep(300)  # 每5分鐘檢查一次
             
-#             if deleted_count > 0:
-#                 message += f"\n✅ 已刪除 {deleted_count} 筆請假記錄"
-#             else:
-#                 message += "\n❌ 找不到符合條件的請假記錄"
-        
-#         # 發送回應
-#         await interaction.followup.send(message.strip())
-        
-#     except Exception as e:
-#         await interaction.followup.send(f"❌ 處理請假請求時發生錯誤：{str(e)}", ephemeral=True)
+        except Exception as e:
+            print(f"重試歡迎訊息時發生錯誤: {str(e)}")
+            await asyncio.sleep(300)
 
 def main():
     try:
