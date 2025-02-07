@@ -18,7 +18,7 @@ from app.config import (
     CHAT_HISTORY_MAX_MESSAGES, HISTORY_PROMPT_TEMPLATE,
     RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
     WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
-    LEAVE_ALLOWED_ROLES
+    LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -191,6 +191,15 @@ async def on_member_join(member):
 5. 適當使用表情符號來增添趣味
 6. {'歡迎新成員加入並簡單介紹伺服器' if is_first_join else '熱情歡迎老朋友回來'}
 
+以下是一些歡迎訊息的例子：
+- 哇！✨ 看看是誰從異次元的彩虹橋上滑下來啦！{member.display_name} 帶著滿身的星光降臨到我們這個充滿歡樂的小宇宙，我已經聞到空氣中瀰漫著新朋友的香氣了！🌈
+
+- 叮咚！🔮 我正在喝下午茶的時候，{member.display_name} 就這樣從我的茶杯裡冒出來了！歡迎來到我們這個瘋狂又溫暖的小天地，這裡有數不清的驚喜等著你去發現呢！🫖✨
+
+- 咦？是誰把魔法星星撒在地上了？原來是 {member.display_name} 順著星光來到我們的秘密基地！讓我們一起在這個充滿創意和歡笑的地方，創造屬於我們的奇幻故事吧！🌟
+
+- 哎呀！我的水晶球顯示，有個叫 {member.display_name} 的旅行者，騎著會飛的獨角獸來到了我們的魔法聚會！在這裡，每個人都是獨特的魔法師，期待看到你的神奇表演！🦄✨
+
 請生成一段溫暖但有趣的歡迎訊息。記得要活潑、有趣、富有創意，但不要太過誇張或失禮。"""
 
             print(f"開始生成歡迎訊息，提示詞: {welcome_prompt}")
@@ -303,8 +312,12 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Process commands first
+    # Process commands first (this will handle !crazy command)
     await bot.process_commands(message)
+    
+    # Skip the rest of the processing if it's a command
+    if message.content.startswith('!'):
+        return
     
     # Check for mentions, but only if the message author is not a bot
     if not message.author.bot:
@@ -481,6 +494,91 @@ async def retry_welcome_messages():
         except Exception as e:
             print(f"重試歡迎訊息時發生錯誤: {str(e)}")
             await asyncio.sleep(300)
+
+@bot.command(name='crazy')
+async def crazy_talk(ctx, *, content: str):
+    """讓 crazy talk 回答特定問題
+    用法：!crazy [提示詞] | [問題]
+    例如：!crazy 用中二病的方式回答 | 為什麼天空是藍色的？
+    """
+    # 檢查是否為允許的用戶
+    if ctx.author.id not in CRAZY_TALK_ALLOWED_USERS:
+        await ctx.reply("❌ 你沒有權限使用此指令", ephemeral=True)
+        return
+
+    # 先刪除用戶的指令訊息（如果有權限的話）
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        # 如果沒有刪除訊息的權限，至少確保指令回應是私密的
+        await ctx.reply("我收到你的請求了！", ephemeral=True)
+    except Exception as e:
+        print(f"刪除訊息時發生錯誤: {str(e)}")
+        await ctx.reply("我收到你的請求了！", ephemeral=True)
+        
+    # 解析提示詞和問題
+    parts = content.split('|', 1)
+    if len(parts) == 2:
+        prompt_guidance, question = parts[0].strip(), parts[1].strip()
+        print(f"Crazy talk 指令觸發 - 用戶: {ctx.author.name}, 提示詞: {prompt_guidance}, 問題: {question}")
+        
+        # 組合完整提示
+        style_prompt = f"""請根據以下提示來回答問題：
+在保持你瘋狂本質的同時，請用這個風格回答：
+{prompt_guidance}
+
+記住：
+1. 不要完全改變你的個性，讓這個風格成為你瘋狂回答的一部分
+2. 你始終是個瘋狂的精靈，只是暫時玩扮演遊戲
+3. 即使模仿這個風格，也要保持你獨特的幽默感和無厘頭特質
+
+問題是：{question}"""
+        question_prompt = style_prompt
+    else:
+        question = content.strip()
+        print(f"Crazy talk 指令觸發 - 用戶: {ctx.author.name}, 問題: {question}")
+        question_prompt = question
+    
+    # 獲取聊天歷史
+    chat_history = await get_chat_history(ctx.channel)
+    if chat_history:
+        context = "\n".join(chat_history)
+        full_prompt = HISTORY_PROMPT_TEMPLATE.format(context=context, content=question_prompt)
+    else:
+        full_prompt = question_prompt
+    
+    # 確保 AI handler 已初始化
+    global ai_handler
+    if ai_handler is None:
+        print("初始化 AI handler")
+        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
+    
+    try:
+        async with ctx.typing():
+            full_response = ""
+            async for chunk in ai_handler.get_streaming_response(
+                full_prompt,
+                question,  # 保存原始問題作為上下文
+                ctx.author.id,
+                ctx.channel.id,
+                ctx.guild.id
+            ):
+                if chunk:
+                    full_response += chunk
+            
+            if full_response:
+                # 分割長訊息並發送到頻道（公開的）
+                parts = split_message(full_response)
+                for part in parts:
+                    await ctx.channel.send(part)
+            else:
+                # 錯誤訊息只給指令發送者看到
+                await ctx.reply("❌ 無法生成回應", ephemeral=True)
+                
+    except Exception as e:
+        print(f"Crazy talk 回應時發生錯誤: {str(e)}")
+        # 錯誤訊息只給指令發送者看到
+        await ctx.reply("❌ 處理請求時發生錯誤", ephemeral=True)
 
 def main():
     try:

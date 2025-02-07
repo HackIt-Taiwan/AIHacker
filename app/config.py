@@ -116,3 +116,6 @@ WELCOMED_MEMBERS_DB_PATH = "data/welcomed_members.db"  # 已歡迎成員資料�
 LEAVE_DB_PATH = "data/leaves.db"  # 請假資料庫路徑
 LEAVE_ALLOWED_ROLES = [int(id.strip()) for id in os.getenv('LEAVE_ALLOWED_ROLES', '').split(',') if id.strip()]  # 允許使用請假指令的身份組 ID 列表
 LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('LEAVE_ANNOUNCEMENT_CHANNEL_IDS', '').split(',') if id.strip()]  # 請假公告頻道 ID 列表
+
+# Crazy Talk Configuration
+CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLOWED_USERS', '').split(',') if id.strip()]  # 允許使用 crazy talk 指令的用戶 ID 列表
