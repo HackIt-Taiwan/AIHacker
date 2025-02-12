@@ -20,7 +20,8 @@ from app.config import (
     WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
     LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS,
     INVITE_ALLOWED_ROLES, QUESTION_CHANNEL_ID, QUESTION_EMOJI,
-    QUESTION_RESOLVER_ROLES, NOTION_FAQ_CHECK_ENABLED
+    QUESTION_RESOLVER_ROLES, NOTION_FAQ_CHECK_ENABLED,
+    QUESTION_FAQ_FOUND_EMOJI, QUESTION_RESOLVED_EMOJI
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -29,7 +30,7 @@ from app.welcomed_members_db import WelcomedMembersDB
 from app.leave_manager import LeaveManager
 from app.ai.agents.leave import agent_leave
 from app.invite_manager import InviteManager
-from app.question_manager import QuestionManager, QuestionView
+from app.question_manager import QuestionManager, QuestionView, FAQResponseView
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -140,14 +141,25 @@ async def on_ready():
     print("Registering permanent buttons")
     # Register generic view for handling existing buttons
     bot.add_view(QuestionView(0))
+    bot.add_view(FAQResponseView(0))  # Add generic FAQ response view
     
     # Get all questions and register their buttons
     question_manager = QuestionManager()
     questions = question_manager.get_all_questions_with_state()
     for question in questions:
+        # Register question resolution button
         view = QuestionView.create_for_question(question['id'], question['is_resolved'])
         bot.add_view(view)
+        
+        # Register FAQ response buttons if the question has FAQ response
+        if question.get('has_faq'):
+            faq_view = FAQResponseView(question['id'], question['is_resolved'])
+            bot.add_view(faq_view)
+            
     print(f"Registered {len(questions)} question buttons")
+
+    # Start FAQ auto-resolve checker
+    asyncio.create_task(check_auto_resolve_faqs())
 
     print("Bot is ready!")
 
@@ -387,6 +399,10 @@ async def on_message(message):
                 try:
                     matching_faq = await notion_faq.find_matching_faq(message.content)
                     if matching_faq:
+                        # Update emoji
+                        await message.clear_reactions()
+                        await message.add_reaction(QUESTION_FAQ_FOUND_EMOJI)
+                        
                         # Create embed for FAQ response
                         embed = discord.Embed(
                             title="📚 找到相關的 FAQ",
@@ -415,10 +431,17 @@ async def on_message(message):
                                 inline=True
                             )
                         
+                        # Record FAQ response
+                        question_manager.record_faq_response(question_id)
+                        
+                        # Create FAQ response view
+                        view = FAQResponseView(question_id)
+                        
                         # Send FAQ response in thread
                         await thread.send(
                             "我在 FAQ 中找到了可能的答案：",
-                            embed=embed
+                            embed=embed,
+                            view=view
                         )
                 except Exception as e:
                     print(f"Error checking FAQ: {str(e)}")
@@ -815,6 +838,38 @@ async def delete_invite(interaction: discord.Interaction, invite_code: str):
     except Exception as e:
         print(f"刪除邀請連結時發生錯誤: {str(e)}")
         await interaction.response.send_message("❌ 刪除邀請連結時發生錯誤", ephemeral=True)
+
+async def check_auto_resolve_faqs():
+    """Periodically check and auto-resolve FAQ questions"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            question_manager = QuestionManager()
+            questions = question_manager.check_and_auto_resolve_faqs()
+            
+            for question in questions:
+                try:
+                    # Mark as resolved
+                    if question_manager.mark_question_resolved(question['id'], None, resolution_type="faq_auto"):
+                        # Update message reaction
+                        channel = bot.get_channel(question['channel_id'])
+                        if channel:
+                            message = await channel.fetch_message(question['message_id'])
+                            if message:
+                                await message.clear_reactions()
+                                await message.add_reaction(QUESTION_RESOLVED_EMOJI)
+                            
+                            # Send notification in thread
+                            thread = bot.get_channel(question['thread_id'])
+                            if thread:
+                                await thread.send("ℹ️ 此問題已自動標記為已解決（由 FAQ 回答）。如果您仍需協助，請重新發問。")
+                except Exception as e:
+                    print(f"Error auto-resolving question {question['id']}: {str(e)}")
+                    
+        except Exception as e:
+            print(f"Error in auto-resolve FAQ check: {str(e)}")
+        
+        await asyncio.sleep(3600)  # Check every hour
 
 def main():
     try:

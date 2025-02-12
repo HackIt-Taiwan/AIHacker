@@ -91,6 +91,8 @@ QUESTION_CHANNEL_ID = int(os.getenv('QUESTION_CHANNEL_ID', '0'))  # Question cha
 QUESTION_RESOLVER_ROLES = [int(id.strip()) for id in os.getenv('QUESTION_RESOLVER_ROLES', '').split(',') if id.strip()]  # Roles allowed to resolve questions
 QUESTION_EMOJI = os.getenv('QUESTION_EMOJI', '❓')  # Question emoji
 QUESTION_RESOLVED_EMOJI = os.getenv('QUESTION_RESOLVED_EMOJI', '✅')  # Emoji for resolved questions
+QUESTION_FAQ_FOUND_EMOJI = os.getenv('QUESTION_FAQ_FOUND_EMOJI', '📚')  # Emoji for questions with FAQ match
+QUESTION_FAQ_PENDING_EMOJI = os.getenv('QUESTION_FAQ_PENDING_EMOJI', '⏳')  # Emoji for questions pending after FAQ
 
 # Crazy Talk Configuration
 CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLOWED_USERS', '').split(',') if id.strip()]  # Users allowed to use crazy talk
