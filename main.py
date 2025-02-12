@@ -18,7 +18,9 @@ from app.config import (
     CHAT_HISTORY_MAX_MESSAGES, HISTORY_PROMPT_TEMPLATE,
     RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
     WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
-    LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS
+    LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS,
+    INVITE_ALLOWED_ROLES, QUESTION_CHANNEL_ID, QUESTION_EMOJI,
+    QUESTION_RESOLVER_ROLES
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -26,6 +28,8 @@ from app.reminder_manager import ReminderManager
 from app.welcomed_members_db import WelcomedMembersDB
 from app.leave_manager import LeaveManager
 from app.ai.agents.leave import agent_leave
+from app.invite_manager import InviteManager
+from app.question_manager import QuestionManager, QuestionView
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -42,6 +46,7 @@ reminder_manager = None
 ai_handler = None
 welcomed_members_db = None
 leave_manager = None
+invite_manager = None
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -92,36 +97,44 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
-    global reminder_manager, ai_handler, welcomed_members_db, leave_manager
-    print(f'{bot.user} has connected to Discord!')
+    """當機器人準備就緒時"""
+    print(f'Logged in as {bot.user.name}')
     
-    # # 註冊斜線命令
-    # try:
-    #     print("開始註冊斜線命令...")
-    #     await bot.tree.sync()
-    #     print("斜線命令註冊完成！")
-    # except Exception as e:
-    #     print(f"註冊斜線命令時發生錯誤: {str(e)}")
-        
-    # Initialize managers
-    reminder_manager = ReminderManager(bot)
-    reminder_manager.start()
-    leave_manager = LeaveManager()
-    ai_handler = AIHandler(reminder_manager, leave_manager, bot)
-    welcomed_members_db = WelcomedMembersDB()
+    # 設置機器人活動狀態
+    if BOT_ACTIVITY:
+        await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
+    
+    # 初始化全域變數
+    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager
+    
+    if reminder_manager is None:
+        print("初始化提醒管理器")
+        reminder_manager = ReminderManager(bot)
+        reminder_manager.start()
+    
+    if ai_handler is None:
+        print("初始化 AI 處理器")
+        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
+        # 啟動請假公告更新器
+        asyncio.create_task(ai_handler.start_leave_announcement_updater())
+    
+    if welcomed_members_db is None:
+        print("初始化歡迎資料庫")
+        welcomed_members_db = WelcomedMembersDB()
+    
+    if leave_manager is None:
+        print("初始化請假管理器")
+        leave_manager = LeaveManager()
+    
+    if invite_manager is None:
+        print("初始化邀請管理器")
+        invite_manager = InviteManager()
 
-    # 啟動請假公告更新器
-    print("啟動請假公告更新器...")
-    asyncio.create_task(ai_handler.start_leave_announcement_updater())
-    print("請假公告更新器已啟動")
+    # 註冊永久按鈕視圖
+    print("註冊永久按鈕")
+    bot.add_view(QuestionView(0))  # 添加一個通用視圖用於處理所有問題按鈕
 
-    # 啟動歡迎訊息重試機制
-    print("啟動歡迎訊息重試機制...")
-    asyncio.create_task(retry_welcome_messages())
-    print("歡迎訊息重試機制已啟動")
-
-    await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
-
+    print("機器人已準備就緒！")
 
 # 新增成員加入事件處理
 @bot.event
@@ -312,9 +325,48 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Process commands first (this will handle !crazy command)
+    # Process commands first
     await bot.process_commands(message)
-    
+    if message.content.startswith('!'):
+        return
+
+    # 檢查是否在問題頻道
+    if message.channel.id == QUESTION_CHANNEL_ID:
+        # 檢查發送者是否有解答權限（有權限的人發送的訊息不當作問題處理）
+        if any(role.id in QUESTION_RESOLVER_ROLES for role in message.author.roles):
+            return
+            
+        # 添加問題表情符號
+        await message.add_reaction(QUESTION_EMOJI)
+        
+        # 創建問題記錄
+        question_manager = QuestionManager()
+        question_id = question_manager.add_question(
+            message.channel.id,
+            message.id,
+            message.author.id,
+            message.content
+        )
+        
+        if question_id:
+            # 創建討論串
+            thread = await message.create_thread(
+                name=f"問題討論：{message.content[:50]}...",
+                reason="問題討論串"
+            )
+            
+            # 更新問題記錄的討論串ID
+            question_manager.update_thread(question_id, thread.id)
+            
+            # 發送確認訊息並添加按鈕
+            confirm_msg = await thread.send(
+                f"✅ 已收到您的問題！"
+            )
+            
+            # 添加永久按鈕
+            view = QuestionView.create_for_question(question_id)
+            await confirm_msg.edit(view=view)
+
     # Skip the rest of the processing if it's a command
     if message.content.startswith('!'):
         return
@@ -579,6 +631,134 @@ async def crazy_talk(ctx, *, content: str):
         print(f"Crazy talk 回應時發生錯誤: {str(e)}")
         # 錯誤訊息只給指令發送者看到
         await ctx.reply("❌ 處理請求時發生錯誤", ephemeral=True)
+
+@bot.tree.command(name="create_invite", description="創建一個永久邀請連結")
+async def create_invite(interaction: discord.Interaction, name: str):
+    """創建一個永久邀請連結
+    
+    參數:
+        name: 邀請連結的名稱（用於追蹤統計）
+    """
+    # 檢查是否有創建邀請的權限
+    if not any(role.id in INVITE_ALLOWED_ROLES for role in interaction.user.roles):
+        await interaction.response.send_message("❌ 你沒有權限創建邀請連結", ephemeral=True)
+        return
+
+    try:
+        # 獲取指定的頻道
+        channel = bot.get_channel(1292488786206261371)
+        if not channel:
+            await interaction.response.send_message("❌ 無法找到指定的頻道", ephemeral=True)
+            return
+
+        # 創建永久邀請連結
+        invite = await channel.create_invite(
+            max_age=0,  # 永不過期
+            max_uses=0,  # 無使用次數限制
+            unique=True  # 每次創建都是新的
+        )
+
+        # 記錄到資料庫
+        if invite_manager.add_invite(invite.code, name, interaction.user.id, channel.id):
+            await interaction.response.send_message(
+                f"✅ 已創建永久邀請連結！\n"
+                f"名稱：{name}\n"
+                f"連結：{invite.url}\n"
+                f"創建者：{interaction.user.mention}",
+                ephemeral=False
+            )
+        else:
+            await interaction.response.send_message("❌ 無法記錄邀請連結", ephemeral=True)
+
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ 機器人沒有創建邀請的權限", ephemeral=True)
+    except Exception as e:
+        print(f"創建邀請連結時發生錯誤: {str(e)}")
+        await interaction.response.send_message("❌ 創建邀請連結時發生錯誤", ephemeral=True)
+
+@bot.tree.command(name="list_invites", description="查看所有邀請連結的使用統計")
+async def list_invites(interaction: discord.Interaction, page: int = 1):
+    """查看所有邀請連結的使用統計
+    
+    參數:
+        page: 頁碼（從1開始）
+    """
+    # 檢查是否有查看邀請的權限
+    if not any(role.id in INVITE_ALLOWED_ROLES for role in interaction.user.roles):
+        await interaction.response.send_message("❌ 你沒有權限查看邀請統計", ephemeral=True)
+        return
+
+    try:
+        # 獲取伺服器的所有邀請
+        guild_invites = await interaction.guild.invites()
+        invites, total_pages = invite_manager.get_invites_page(page, [{'code': inv.code, 'uses': inv.uses} for inv in guild_invites])
+        
+        if not invites:
+            await interaction.response.send_message("📊 目前還沒有任何邀請記錄", ephemeral=True)
+            return
+
+        # 構建統計訊息
+        message = f"📊 邀請連結使用統計（第 {page}/{total_pages} 頁）：\n\n"
+        for invite in invites:
+            creator = interaction.guild.get_member(invite['creator_id'])
+            creator_mention = creator.mention if creator else "未知用戶"
+            created_time = invite['created_at'].strftime("%Y-%m-%d %H:%M")
+            
+            message += (
+                f"📎 **{invite['name']}**\n"
+                f"連結：discord.gg/{invite['invite_code']}\n"
+                f"使用次數：{invite['uses']} 次\n"
+                f"創建者：{creator_mention}\n"
+                f"創建時間：{created_time}\n"
+                f"{'─' * 20}\n"
+            )
+
+        # 添加頁碼導航按鈕
+        if total_pages > 1:
+            message += f"\n使用 `/list_invites page:<頁碼>` 查看其他頁面"
+
+        await interaction.response.send_message(message)
+
+    except Exception as e:
+        print(f"獲取邀請統計時發生錯誤: {str(e)}")
+        await interaction.response.send_message("❌ 獲取邀請統計時發生錯誤", ephemeral=True)
+
+@bot.tree.command(name="delete_invite", description="刪除一個邀請連結")
+async def delete_invite(interaction: discord.Interaction, invite_code: str):
+    """刪除一個邀請連結
+    
+    參數:
+        invite_code: 邀請連結的代碼（不是完整URL）
+    """
+    # 檢查是否有刪除邀請的權限
+    if not any(role.id in INVITE_ALLOWED_ROLES for role in interaction.user.roles):
+        await interaction.response.send_message("❌ 你沒有權限刪除邀請連結", ephemeral=True)
+        return
+
+    try:
+        # 獲取伺服器的所有邀請
+        guild_invites = await interaction.guild.invites()
+        invite_data = [{'code': inv.code, 'uses': inv.uses} for inv in guild_invites]
+        
+        # 嘗試刪除邀請
+        if invite_manager.delete_invite(invite_code, interaction.user.id, invite_data):
+            # 嘗試刪除 Discord 上的邀請
+            for invite in guild_invites:
+                if invite.code == invite_code:
+                    await invite.delete()
+                    break
+            
+            await interaction.response.send_message(f"✅ 已成功刪除邀請連結：{invite_code}")
+        else:
+            await interaction.response.send_message("❌ 無法刪除邀請連結，可能是因為你不是創建者", ephemeral=True)
+
+    except discord.NotFound:
+        await interaction.response.send_message("❌ 找不到指定的邀請連結", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ 機器人沒有刪除邀請的權限", ephemeral=True)
+    except Exception as e:
+        print(f"刪除邀請連結時發生錯誤: {str(e)}")
+        await interaction.response.send_message("❌ 刪除邀請連結時發生錯誤", ephemeral=True)
 
 def main():
     try:

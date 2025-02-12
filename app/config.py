@@ -40,15 +40,15 @@ WELCOME_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('WELCOME_CHANNEL_IDS'
 DEFAULT_WELCOME_MESSAGE = "歡迎 {member} 加入我們的伺服器！✨"  # 預設歡迎訊息
 
 # Rate Limiting
-RATE_LIMIT_MESSAGES = 5  # Maximum messages per period
-RATE_LIMIT_PERIOD = 60  # seconds
+RATE_LIMIT_MESSAGES = 6  # Maximum messages per period
+RATE_LIMIT_PERIOD = 180  # seconds
 RATE_LIMIT_ERROR = "你發太多訊息了，請稍等一下。"  # Rate limit error message
 
 # Message Handling
 MAX_MESSAGE_LENGTH = 1900  # Discord's limit is 2000, leaving some margin
 MIN_MESSAGE_LENGTH = 3  # 最短觸發長度
 IGNORED_PREFIXES = ('!', '?', '/', '$', '#')  # 忽略的命令前綴
-RANDOM_REPLY_CHANCE = 0.005  # 0.5% 機率自動回覆
+RANDOM_REPLY_CHANCE = 0.001  # 0.1% 機率自動回覆
 STREAM_UPDATE_INTERVAL = 0.1  # seconds between message updates
 STREAM_MIN_UPDATE_LENGTH = 5  # Minimum characters before updating message
 STREAM_UPDATE_CHARS = ['.', '!', '?', '\n', '，', '。', '！', '？']  # Characters that trigger update
@@ -119,3 +119,16 @@ LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('LEAVE_ANN
 
 # Crazy Talk Configuration
 CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLOWED_USERS', '').split(',') if id.strip()]  # 允許使用 crazy talk 指令的用戶 ID 列表
+
+# Invite Configuration
+INVITE_TIME_ZONE = 'Asia/Taipei'  # 設定時區為 GMT+8
+INVITE_ALLOWED_ROLES = [int(id.strip()) for id in os.getenv('INVITE_ALLOWED_ROLES', '').split(',') if id.strip()]  # 允許管理邀請的身份組
+INVITE_LIST_PAGE_SIZE = int(os.getenv('INVITE_LIST_PAGE_SIZE', '10'))  # 每頁顯示的邀請數量
+INVITE_LIST_MAX_PAGES = int(os.getenv('INVITE_LIST_MAX_PAGES', '5'))  # 最大頁數
+INVITE_DB_PATH = "data/invites.db"  # 邀請資料庫路徑
+
+# Question Channel Configuration
+QUESTION_CHANNEL_ID = int(os.getenv('QUESTION_CHANNEL_ID', '0'))  # 問題頻道ID
+QUESTION_RESOLVER_ROLES = [int(id.strip()) for id in os.getenv('QUESTION_RESOLVER_ROLES', '').split(',') if id.strip()]  # 允許解答問題的身份組
+QUESTION_EMOJI = os.getenv('QUESTION_EMOJI', '❓')  # 問題表情符號
+QUESTION_DB_PATH = "data/questions.db"  # 問題資料庫路徑
