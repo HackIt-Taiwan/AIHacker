@@ -20,7 +20,7 @@ from app.config import (
     WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
     LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS,
     INVITE_ALLOWED_ROLES, QUESTION_CHANNEL_ID, QUESTION_EMOJI,
-    QUESTION_RESOLVER_ROLES
+    QUESTION_RESOLVER_ROLES, NOTION_FAQ_CHECK_ENABLED
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -47,6 +47,7 @@ ai_handler = None
 welcomed_members_db = None
 leave_manager = None
 invite_manager = None
+notion_faq = None
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -105,7 +106,7 @@ async def on_ready():
         await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
     
     # Initialize global variables
-    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager
+    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager, notion_faq
     
     if reminder_manager is None:
         print("Initializing reminder manager")
@@ -129,6 +130,11 @@ async def on_ready():
     if invite_manager is None:
         print("Initializing invite manager")
         invite_manager = InviteManager()
+        
+    if notion_faq is None and NOTION_FAQ_CHECK_ENABLED:
+        print("Initializing Notion FAQ service")
+        from app.services.notion_faq import NotionFAQ
+        notion_faq = NotionFAQ()
 
     # Register permanent button views
     print("Registering permanent buttons")
@@ -348,7 +354,7 @@ async def on_message(message):
         # Add question emoji
         await message.add_reaction(QUESTION_EMOJI)
         
-        # Create question record
+        # Create question record and thread first
         question_manager = QuestionManager()
         question_id = question_manager.add_question(
             message.channel.id,
@@ -375,6 +381,47 @@ async def on_message(message):
             # Add permanent button
             view = QuestionView.create_for_question(question_id)
             await confirm_msg.edit(view=view)
+            
+            # Check FAQ if enabled
+            if NOTION_FAQ_CHECK_ENABLED and notion_faq:
+                try:
+                    matching_faq = await notion_faq.find_matching_faq(message.content)
+                    if matching_faq:
+                        # Create embed for FAQ response
+                        embed = discord.Embed(
+                            title="📚 找到相關的 FAQ",
+                            color=discord.Color.blue()
+                        )
+                        embed.add_field(
+                            name="問題",
+                            value=matching_faq["question"],
+                            inline=False
+                        )
+                        embed.add_field(
+                            name="答案",
+                            value=matching_faq["answer"],
+                            inline=False
+                        )
+                        if matching_faq["category"]:
+                            embed.add_field(
+                                name="分類",
+                                value=matching_faq["category"],
+                                inline=True
+                            )
+                        if matching_faq["tags"]:
+                            embed.add_field(
+                                name="標籤",
+                                value=", ".join(matching_faq["tags"]),
+                                inline=True
+                            )
+                        
+                        # Send FAQ response in thread
+                        await thread.send(
+                            "我在 FAQ 中找到了可能的答案：",
+                            embed=embed
+                        )
+                except Exception as e:
+                    print(f"Error checking FAQ: {str(e)}")
 
     # Skip the rest of the processing if it's a command
     if message.content.startswith('!'):

@@ -95,6 +95,11 @@ QUESTION_RESOLVED_EMOJI = os.getenv('QUESTION_RESOLVED_EMOJI', '✅')  # Emoji f
 # Crazy Talk Configuration
 CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLOWED_USERS', '').split(',') if id.strip()]  # Users allowed to use crazy talk
 
+# Notion Configuration
+NOTION_API_KEY = os.getenv('NOTION_API_KEY')
+NOTION_FAQ_PAGE_ID = os.getenv('NOTION_FAQ_PAGE_ID')
+NOTION_FAQ_CHECK_ENABLED = os.getenv('NOTION_FAQ_CHECK_ENABLED', 'True').lower() == 'true'
+
 # Message Types (for classifier)
 MESSAGE_TYPES = {
     'SEARCH': 'search',      # Requires information search
