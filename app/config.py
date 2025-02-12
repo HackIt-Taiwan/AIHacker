@@ -92,6 +92,9 @@ QUESTION_RESOLVER_ROLES = [int(id.strip()) for id in os.getenv('QUESTION_RESOLVE
 QUESTION_EMOJI = os.getenv('QUESTION_EMOJI', '❓')  # Question emoji
 QUESTION_RESOLVED_EMOJI = os.getenv('QUESTION_RESOLVED_EMOJI', '✅')  # Emoji for resolved questions
 
+# Crazy Talk Configuration
+CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLOWED_USERS', '').split(',') if id.strip()]  # Users allowed to use crazy talk
+
 # Message Types (for classifier)
 MESSAGE_TYPES = {
     'SEARCH': 'search',      # Requires information search
