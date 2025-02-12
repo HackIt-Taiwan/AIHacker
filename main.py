@@ -97,44 +97,53 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
-    """當機器人準備就緒時"""
+    """Event handler for when the bot is ready"""
     print(f'Logged in as {bot.user.name}')
     
-    # 設置機器人活動狀態
+    # Set bot activity status
     if BOT_ACTIVITY:
         await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
     
-    # 初始化全域變數
+    # Initialize global variables
     global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager
     
     if reminder_manager is None:
-        print("初始化提醒管理器")
+        print("Initializing reminder manager")
         reminder_manager = ReminderManager(bot)
         reminder_manager.start()
     
     if ai_handler is None:
-        print("初始化 AI 處理器")
+        print("Initializing AI handler")
         ai_handler = AIHandler(reminder_manager, leave_manager, bot)
-        # 啟動請假公告更新器
+        # Start leave announcement updater
         asyncio.create_task(ai_handler.start_leave_announcement_updater())
     
     if welcomed_members_db is None:
-        print("初始化歡迎資料庫")
+        print("Initializing welcome database")
         welcomed_members_db = WelcomedMembersDB()
     
     if leave_manager is None:
-        print("初始化請假管理器")
+        print("Initializing leave manager")
         leave_manager = LeaveManager()
     
     if invite_manager is None:
-        print("初始化邀請管理器")
+        print("Initializing invite manager")
         invite_manager = InviteManager()
 
-    # 註冊永久按鈕視圖
-    print("註冊永久按鈕")
-    bot.add_view(QuestionView(0))  # 添加一個通用視圖用於處理所有問題按鈕
+    # Register permanent button views
+    print("Registering permanent buttons")
+    # Register generic view for handling existing buttons
+    bot.add_view(QuestionView(0))
+    
+    # Get all questions and register their buttons
+    question_manager = QuestionManager()
+    questions = question_manager.get_all_questions_with_state()
+    for question in questions:
+        view = QuestionView.create_for_question(question['id'], question['is_resolved'])
+        bot.add_view(view)
+    print(f"Registered {len(questions)} question buttons")
 
-    print("機器人已準備就緒！")
+    print("Bot is ready!")
 
 # 新增成員加入事件處理
 @bot.event
@@ -330,16 +339,16 @@ async def on_message(message):
     if message.content.startswith('!'):
         return
 
-    # 檢查是否在問題頻道
+    # Check if message is in question channel
     if message.channel.id == QUESTION_CHANNEL_ID:
-        # 檢查發送者是否有解答權限（有權限的人發送的訊息不當作問題處理）
+        # Skip processing if user has resolver roles
         if any(role.id in QUESTION_RESOLVER_ROLES for role in message.author.roles):
             return
             
-        # 添加問題表情符號
+        # Add question emoji
         await message.add_reaction(QUESTION_EMOJI)
         
-        # 創建問題記錄
+        # Create question record
         question_manager = QuestionManager()
         question_id = question_manager.add_question(
             message.channel.id,
@@ -349,21 +358,21 @@ async def on_message(message):
         )
         
         if question_id:
-            # 創建討論串
+            # Create discussion thread
             thread = await message.create_thread(
                 name=f"問題討論：{message.content[:50]}...",
                 reason="問題討論串"
             )
             
-            # 更新問題記錄的討論串ID
+            # Update question record with thread ID
             question_manager.update_thread(question_id, thread.id)
             
-            # 發送確認訊息並添加按鈕
+            # Send confirmation message with button
             confirm_msg = await thread.send(
                 f"✅ 已收到您的問題！"
             )
             
-            # 添加永久按鈕
+            # Add permanent button
             view = QuestionView.create_for_question(question_id)
             await confirm_msg.edit(view=view)
 
@@ -602,7 +611,7 @@ async def crazy_talk(ctx, *, content: str):
     # 確保 AI handler 已初始化
     global ai_handler
     if ai_handler is None:
-        print("初始化 AI handler")
+        print("Initializing AI handler")
         ai_handler = AIHandler(reminder_manager, leave_manager, bot)
     
     try:
