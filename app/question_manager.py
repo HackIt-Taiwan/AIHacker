@@ -8,11 +8,30 @@ from datetime import datetime, timedelta
 import discord
 from discord.ui import Button, View
 from typing import Optional, Dict, List
+import logging
 from app.config import (
     QUESTION_DB_PATH, QUESTION_RESOLVER_ROLES,
     QUESTION_EMOJI, QUESTION_RESOLVED_EMOJI,
     QUESTION_FAQ_FOUND_EMOJI, QUESTION_FAQ_PENDING_EMOJI
 )
+
+# 設置日誌
+logger = logging.getLogger('question_manager')
+logger.setLevel(logging.INFO)
+
+# 確保日誌目錄存在
+os.makedirs('logs', exist_ok=True)
+
+# 設置檔案處理器
+file_handler = logging.FileHandler('logs/question_manager.log', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+
+# 設置日誌格式
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# 添加處理器到日誌記錄器
+logger.addHandler(file_handler)
 
 class FAQResponseButton(Button):
     # 用於追踪正在處理中的按鈕
@@ -21,8 +40,8 @@ class FAQResponseButton(Button):
     def __init__(self, question_id: int, is_resolved: bool, response_type: str):
         # Initialize button with appropriate style based on response type
         super().__init__(
-            style=discord.ButtonStyle.green if response_type == "resolved" else discord.ButtonStyle.gray,
-            label="問題已解決" if response_type == "resolved" else "仍需協助",
+            style=discord.ButtonStyle.green if response_type == "resolved" else discord.ButtonStyle.secondary,
+            label="✨ 已解決問題" if response_type == "resolved" else "💭 需要更多協助",
             custom_id=f"faq_response_{question_id}_{response_type}",
             disabled=is_resolved
         )
@@ -33,22 +52,26 @@ class FAQResponseButton(Button):
         # 檢查按鈕是否正在處理中
         button_id = f"{self.question_id}_{self.response_type}"
         if button_id in self._processing_buttons:
-            await interaction.response.send_message("⏳ 請稍候，正在處理您的請求...", ephemeral=True)
+            logger.info(f"FAQ按鈕正在處理中 - 問題ID: {self.question_id}, 用戶: {interaction.user.name}({interaction.user.id})")
+            await interaction.response.send_message("💫 正在處理您的回應...", ephemeral=True)
             return
 
         # 將按鈕標記為處理中
         self._processing_buttons.add(button_id)
+        logger.info(f"開始處理FAQ回應 - 問題ID: {self.question_id}, 用戶: {interaction.user.name}({interaction.user.id}), 回應類型: {self.response_type}")
 
         try:
             question_manager = QuestionManager()
             question = question_manager.get_question(self.question_id)
             
             if not question:
-                await interaction.response.send_message("❌ 找不到此問題！", ephemeral=True)
+                logger.error(f"找不到問題記錄 - 問題ID: {self.question_id}")
+                await interaction.response.send_message("❌ 無法找到此問題的記錄", ephemeral=True)
                 return
                 
             if interaction.user.id != question['user_id']:
-                await interaction.response.send_message("❌ 只有提問者可以回應 FAQ 的幫助程度！", ephemeral=True)
+                logger.warning(f"非提問者嘗試回應FAQ - 問題ID: {self.question_id}, 用戶: {interaction.user.name}({interaction.user.id})")
+                await interaction.response.send_message("💡 只有提問者可以回應 FAQ 的幫助程度", ephemeral=True)
                 return
 
             # 立即回應交互以避免超時
@@ -60,10 +83,12 @@ class FAQResponseButton(Button):
                 for item in view.children:
                     item.disabled = True
                 await interaction.message.edit(view=view)
+                logger.info(f"已禁用FAQ按鈕 - 問題ID: {self.question_id}")
 
                 if self.response_type == "resolved":
                     # Mark question as resolved by FAQ
                     if question_manager.mark_question_resolved(self.question_id, None, resolution_type="faq"):
+                        logger.info(f"問題已被FAQ解決 - 問題ID: {self.question_id}, 用戶: {interaction.user.name}({interaction.user.id})")
                         # Update original message reactions
                         try:
                             channel = interaction.guild.get_channel(question['channel_id'])
@@ -73,19 +98,26 @@ class FAQResponseButton(Button):
                                     await message.clear_reactions()
                                     await message.add_reaction(QUESTION_RESOLVED_EMOJI)
                                     
-                                    # Find and disable the original question button
-                                    async for msg in interaction.channel.history():
-                                        if msg.author == interaction.client.user and "已收到您的問題！" in msg.content:
-                                            view = discord.ui.View.from_message(msg)
-                                            for item in view.children:
-                                                item.disabled = True
-                                            await msg.edit(view=view)
-                                            break
+                                    # 找到並禁用所有相關按鈕
+                                    async for msg in interaction.channel.history(limit=50):
+                                        if msg.author == interaction.client.user:
+                                            # 檢查是否為原始問題按鈕
+                                            if "已收到您的問題！" in msg.content:
+                                                view = discord.ui.View.from_message(msg)
+                                                for item in view.children:
+                                                    item.disabled = True
+                                                await msg.edit(view=view)
+                                            # 檢查是否為 FAQ 回應按鈕
+                                            elif "找到相關的 FAQ" in msg.content:
+                                                view = discord.ui.View.from_message(msg)
+                                                for item in view.children:
+                                                    item.disabled = True
+                                                await msg.edit(view=view)
                         except Exception as e:
                             print(f"Error updating reactions or buttons: {str(e)}")
                         
-                        await interaction.followup.send("✅ 感謝您的回饋！很高興 FAQ 能夠解決您的問題。", ephemeral=True)
-                        await interaction.channel.send("✅ 提問者表示 FAQ 已解決此問題！")
+                        await interaction.followup.send("✨ 感謝您的回饋！\n很高興 FAQ 能夠解決您的問題", ephemeral=True)
+                        await interaction.channel.send("🎉 **問題已解決**\n此問題已透過 FAQ 成功解答")
                 else:
                     # Mark as needing further assistance
                     question_manager.mark_faq_insufficient(self.question_id)
@@ -101,12 +133,12 @@ class FAQResponseButton(Button):
                     except Exception as e:
                         print(f"Error updating reactions: {str(e)}")
                     
-                    await interaction.followup.send("✅ 感謝您的回饋！我們會盡快為您提供進一步協助。", ephemeral=True)
-                    await interaction.channel.send("ℹ️ 提問者表示需要進一步協助，請相關人員協助回答。")
+                    await interaction.followup.send("💫 感謝您的回饋！\n我們會盡快為您提供進一步協助", ephemeral=True)
+                    await interaction.channel.send("💭 **需要更多協助**\n提問者表示需要進一步的說明，請相關人員協助回答")
             except Exception as e:
                 print(f"Error handling FAQ response: {str(e)}")
                 try:
-                    await interaction.followup.send("❌ 處理回應時發生錯誤，請稍後再試。", ephemeral=True)
+                    await interaction.followup.send("⚠️ 處理回應時發生問題，請稍後再試", ephemeral=True)
                 except Exception:
                     pass
         finally:
@@ -124,61 +156,72 @@ class QuestionButton(Button):
     def __init__(self, question_id: int, is_resolved: bool = False):
         # Initialize button with appropriate style based on resolution status
         super().__init__(
-            style=discord.ButtonStyle.green if not is_resolved else discord.ButtonStyle.gray,
-            label="已完成" if not is_resolved else "已標記完成",
+            style=discord.ButtonStyle.green if not is_resolved else discord.ButtonStyle.secondary,
+            label="標記已解決" if not is_resolved else "已標記完成",
             custom_id=f"resolve_question_{question_id}",
             disabled=is_resolved
         )
         self.question_id = question_id
 
     async def callback(self, interaction: discord.Interaction):
-        # Check if user has permission to resolve questions
+        # 檢查是否有解決問題的權限
         if not any(role.id in QUESTION_RESOLVER_ROLES for role in interaction.user.roles):
-            await interaction.response.send_message("❌ 您沒有標記問題解決的權限！", ephemeral=True)
+            logger.warning(f"用戶嘗試無權限操作 - 用戶: {interaction.user.name}({interaction.user.id}), 問題ID: {self.question_id}")
+            await interaction.response.send_message(
+                "💡 此操作需要特定的權限\n"
+                "如果您需要標記問題解決，請聯繫工作人員協助",
+                ephemeral=True
+            )
             return
 
-        # Update question status
+        # 立即回應互動以避免超時
+        await interaction.response.defer(ephemeral=True)
+        logger.info(f"開始處理問題解決標記 - 問題ID: {self.question_id}, 工作人員: {interaction.user.name}({interaction.user.id})")
+
         question_manager = QuestionManager()
         
-        # Get question info for emoji handling
-        question = question_manager.get_question(self.question_id)
-        if not question:
-            await interaction.response.send_message("❌ 找不到此問題！", ephemeral=True)
-            return
-            
+        # Mark question as resolved
         if question_manager.mark_question_resolved(self.question_id, interaction.user.id):
             # Update button state
-            self.style = discord.ButtonStyle.gray
+            self.style = discord.ButtonStyle.secondary
             self.label = "已標記完成"
             self.disabled = True
             
-            # Update view in original message
-            view = View.from_message(interaction.message)
-            view.clear_items()
-            view.add_item(self)
+            # Update view
+            view = self.view
+            for item in view.children:
+                item.disabled = True
             await interaction.message.edit(view=view)
             
-            # Handle emojis in original message
+            # Update original message reaction and disable all related buttons
             try:
-                channel = interaction.guild.get_channel(question['channel_id'])
-                if channel:
-                    message = await channel.fetch_message(question['message_id'])
-                    if message:
-                        # Remove all reactions and add resolved emoji
-                        await message.clear_reactions()
-                        await message.add_reaction(QUESTION_RESOLVED_EMOJI)
+                question = question_manager.get_question(self.question_id)
+                if question:
+                    channel = interaction.guild.get_channel(question['channel_id'])
+                    if channel:
+                        # Update original message reaction
+                        message = await channel.fetch_message(question['message_id'])
+                        if message:
+                            await message.clear_reactions()
+                            await message.add_reaction(QUESTION_RESOLVED_EMOJI)
+                        
+                        # Find and disable all related buttons in the thread
+                        async for msg in interaction.channel.history(limit=50):
+                            if msg.author == interaction.client.user:
+                                try:
+                                    # 檢查是否為 FAQ 回應按鈕
+                                    if "智能解答" in msg.embeds[0].title:
+                                        view = discord.ui.View.from_message(msg)
+                                        for item in view.children:
+                                            item.disabled = True
+                                        await msg.edit(view=view)
+                                except (IndexError, AttributeError):
+                                    pass  # 跳過沒有 embed 或其他格式的訊息
             except Exception as e:
-                print(f"Error handling emojis: {str(e)}")
+                print(f"Error updating message reaction or buttons: {str(e)}")
             
-            # Send resolution message in thread
-            await interaction.channel.send(
-                f"✅ 本問題已由 {interaction.user.mention} 標記為已解決！"
-            )
-            
-            # Defer interaction response
-            await interaction.response.defer()
-        else:
-            await interaction.response.send_message("❌ 標記問題解決時發生錯誤！", ephemeral=True)
+            await interaction.followup.send("✨ 已將問題標記為已解決", ephemeral=True)
+            await interaction.channel.send(f"✨ 此問題已由 {interaction.user.mention} 標記為已解決")
 
 class QuestionView(View):
     def __init__(self, question_id: int = 0):
@@ -245,11 +288,14 @@ class QuestionManager:
                     VALUES (?, ?, ?, ?)
                 ''', (channel_id, message_id, user_id, content))
                 conn.commit()
-                return cursor.lastrowid
+                question_id = cursor.lastrowid
+                logger.info(f"新問題已添加 - ID: {question_id}, 用戶ID: {user_id}, 頻道: {channel_id}")
+                return question_id
         except sqlite3.IntegrityError:
+            logger.error(f"添加問題失敗(重複記錄) - 頻道: {channel_id}, 訊息: {message_id}")
             return None
         except Exception as e:
-            print(f"Error adding question record: {str(e)}")
+            logger.error(f"添加問題記錄時發生錯誤: {str(e)}")
             return None
 
     def update_thread(self, question_id: int, thread_id: int) -> bool:
@@ -279,9 +325,10 @@ class QuestionManager:
                     WHERE id = ? AND resolved_at IS NULL
                 ''', (resolver_id, resolution_type, question_id))
                 conn.commit()
+                logger.info(f"問題已標記為已解決 - ID: {question_id}, 解決者: {resolver_id}, 類型: {resolution_type}")
                 return True
         except Exception as e:
-            print(f"Error marking question as resolved: {str(e)}")
+            logger.error(f"標記問題已解決時發生錯誤 - ID: {question_id}, 錯誤: {str(e)}")
             return False
 
     def mark_faq_insufficient(self, question_id: int) -> bool:
@@ -295,9 +342,10 @@ class QuestionManager:
                     WHERE id = ?
                 ''', (question_id,))
                 conn.commit()
+                logger.info(f"FAQ回應被標記為不足 - 問題ID: {question_id}")
                 return True
         except Exception as e:
-            print(f"Error marking FAQ as insufficient: {str(e)}")
+            logger.error(f"標記FAQ不足時發生錯誤 - 問題ID: {question_id}, 錯誤: {str(e)}")
             return False
 
     def check_and_auto_resolve_faqs(self) -> List[Dict]:
@@ -329,9 +377,10 @@ class QuestionManager:
                     WHERE id = ?
                 ''', (question_id,))
                 conn.commit()
+                logger.info(f"已記錄FAQ回應 - 問題ID: {question_id}")
                 return True
         except Exception as e:
-            print(f"Error recording FAQ response: {str(e)}")
+            logger.error(f"記錄FAQ回應時發生錯誤 - 問題ID: {question_id}, 錯誤: {str(e)}")
             return False
 
     def get_question(self, question_id: int) -> Optional[Dict]:

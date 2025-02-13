@@ -403,33 +403,18 @@ async def on_message(message):
                         await message.clear_reactions()
                         await message.add_reaction(QUESTION_FAQ_FOUND_EMOJI)
                         
-                        # Create embed for FAQ response
+                        # Create a minimalistic embed for FAQ response
                         embed = discord.Embed(
-                            title="📚 找到相關的 FAQ",
-                            color=discord.Color.blue()
+                            title="智能解答",
+                            description=f"**問題：** {matching_faq['question']}\n**答案：** {matching_faq['answer']}",
+                            color=discord.Color.from_rgb(240, 240, 240)  
                         )
-                        embed.add_field(
-                            name="問題",
-                            value=matching_faq["question"],
-                            inline=False
-                        )
-                        embed.add_field(
-                            name="答案",
-                            value=matching_faq["answer"],
-                            inline=False
-                        )
-                        if matching_faq["category"]:
-                            embed.add_field(
-                                name="分類",
-                                value=matching_faq["category"],
-                                inline=True
-                            )
-                        if matching_faq["tags"]:
-                            embed.add_field(
-                                name="標籤",
-                                value=", ".join(matching_faq["tags"]),
-                                inline=True
-                            )
+                        if matching_faq.get("category"):
+                            embed.add_field(name="分類", value=f"{matching_faq['category']}", inline=True)
+                        if matching_faq.get("tags"):
+                            tags = " • ".join(matching_faq['tags'])
+                            embed.add_field(name="標籤", value=tags, inline=True)
+                        embed.set_footer(text="請選擇下方按鈕告知您是否滿意這個答案")
                         
                         # Record FAQ response
                         question_manager.record_faq_response(question_id)
@@ -439,7 +424,6 @@ async def on_message(message):
                         
                         # Send FAQ response in thread
                         await thread.send(
-                            "我在 FAQ 中找到了可能的答案：",
                             embed=embed,
                             view=view
                         )

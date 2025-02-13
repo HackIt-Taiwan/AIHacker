@@ -11,6 +11,7 @@ from app.ai.agents.classifier import agent_classifier
 from app.ai.agents.general import agent_general
 from app.ai.agents.reminder import agent_reminder
 from app.ai.agents.leave import agent_leave
+from app.ai.agents.faq import agent_faq
 
 # TODO: Implement the ai_select_init, get_model (model getter) functions
 
@@ -71,4 +72,10 @@ async def create_primary_agent():
     """Create the primary agent for main responses."""
     model = get_primary_model()
     agent = await agent_crazy(model)
+    return agent
+
+async def create_faq_agent() -> Agent:
+    """Create a FAQ matching agent for finding relevant FAQs."""
+    model = get_classifier_model()  # 使用主要模型，因為需要較強的語意理解能力
+    agent = await agent_faq(model)
     return agent

@@ -93,16 +93,13 @@ class NotionFAQ:
 
 {self._format_faqs_for_prompt(faqs)}
 
-用戶問題：{question}
+用戶問題：{question}"""
 
-請判斷這個問題是否已經包含在上述 FAQ 中。如果是，請回傳 FAQ 的編號（例如：1）；如果不是，請回傳 "none"。
-只需要回傳數字或 "none"，不需要其他解釋。"""
-
-            # Use the classifier AI to determine if there's a match
-            from app.ai.ai_select import create_classifier_agent
-            classifier = await create_classifier_agent()
+            # Use the FAQ matching agent
+            from app.ai.ai_select import create_faq_agent
+            faq_agent = await create_faq_agent()
             
-            async with classifier.run_stream(prompt) as result:
+            async with faq_agent.run_stream(prompt) as result:
                 response = ""
                 async for chunk in result.stream_text(delta=True):
                     response += chunk
