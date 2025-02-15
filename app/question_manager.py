@@ -428,11 +428,13 @@ class QuestionManager:
                     SELECT id, channel_id, message_id, thread_id,
                            resolved_at IS NOT NULL as is_resolved,
                            faq_response_at IS NOT NULL as has_faq,
-                           resolved_at IS NULL AND faq_response_at IS NOT NULL as has_pending_faq
+                           resolved_at IS NULL AND faq_response_at IS NOT NULL as has_pending_faq,
+                           faq_response_at,
+                           datetime(faq_response_at, '+12 hours') <= datetime('now') as is_faq_expired
                     FROM questions
                     ORDER BY created_at DESC
                 ''')
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            print(f"Error getting all question states: {str(e)}")
+            logger.error(f"Error getting all question states: {str(e)}")
             return [] 

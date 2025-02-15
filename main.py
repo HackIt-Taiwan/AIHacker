@@ -146,17 +146,30 @@ async def on_ready():
     # Get all questions and register their buttons
     question_manager = QuestionManager()
     questions = question_manager.get_all_questions_with_state()
+    active_count = 0
     for question in questions:
-        # Register question resolution button
+        # 跳過已解決的問題
+        if question['is_resolved']:
+            continue
+            
+        # 跳過超過12小時有FAQ但沒有回應的問題（這些會被自動解決）
+        if (question['has_pending_faq'] and 
+            question.get('faq_response_at') and 
+            datetime.now() - datetime.fromisoformat(question['faq_response_at']) > timedelta(hours=12)):
+            continue
+            
+        # 註冊問題解決按鈕
         view = QuestionView.create_for_question(question['id'], question['is_resolved'])
         bot.add_view(view)
         
-        # Register FAQ response buttons if the question has FAQ response
+        # 註冊 FAQ 回應按鈕（如果有的話）
         if question.get('has_faq'):
             faq_view = FAQResponseView(question['id'], question['is_resolved'])
             bot.add_view(faq_view)
             
-    print(f"Registered {len(questions)} question buttons")
+        active_count += 1
+            
+    print(f"Registered {active_count} active question buttons")
 
     # Start FAQ auto-resolve checker
     asyncio.create_task(check_auto_resolve_faqs())
@@ -780,7 +793,7 @@ async def list_invites(interaction: discord.Interaction, page: int = 1):
         if total_pages > 1:
             message += f"\n使用 `/list_invites page:<頁碼>` 查看其他頁面"
 
-        await interaction.response.send_message(message)
+        await interaction.response.send_message(message, ephemeral=True)
 
     except Exception as e:
         print(f"獲取邀請統計時發生錯誤: {str(e)}")
