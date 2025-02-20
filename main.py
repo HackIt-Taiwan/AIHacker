@@ -5,7 +5,7 @@ from collections import defaultdict
 import time
 import random
 from typing import Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 
 from app.config import (
@@ -155,7 +155,7 @@ async def on_ready():
         # 跳過超過12小時有FAQ但沒有回應的問題（這些會被自動解決）
         if (question['has_pending_faq'] and 
             question.get('faq_response_at') and 
-            datetime.now() - datetime.fromisoformat(question['faq_response_at']) > timedelta(hours=12)):
+            datetime.now(timezone.utc) - datetime.fromisoformat(question['faq_response_at']) > timedelta(hours=12)):
             continue
             
         # 註冊問題解決按鈕
@@ -174,11 +174,28 @@ async def on_ready():
     # Start FAQ auto-resolve checker
     asyncio.create_task(check_auto_resolve_faqs())
 
+    # Bot was offline for a while, welcome members who joined while offline
+    last_online = datetime.now(timezone.utc) - timedelta(days=1)
+    await send_welcome_to_offline_members(last_online)
+
     print("Bot is ready!")
+
+async def send_welcome_to_offline_members(last_online):
+    print("Checking for members who joined while bot was offline...")
+    for guild in bot.guilds:
+        async for member in guild.fetch_members():
+            if not member.bot and member.joined_at and member.joined_at > last_online:
+                # check not welcomed
+                if not welcomed_members_db.get_member_join_count(member.id, guild.id) > 0:
+                    print(f"Sending welcome to {member} who joined at {member.joined_at}")
+                    await send_welcome(member)
 
 # 新增成員加入事件處理
 @bot.event
 async def on_member_join(member):
+    await send_welcome(member)
+
+async def send_welcome(member: discord.Member):
     print(f"新成員加入事件觸發: {member.name} (ID: {member.id})")
     
     # 確保 AI handler 和歡迎資料庫已初始化
