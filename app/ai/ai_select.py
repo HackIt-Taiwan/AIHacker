@@ -12,6 +12,7 @@ from app.ai.agents.general import agent_general
 from app.ai.agents.reminder import agent_reminder
 from app.ai.agents.leave import agent_leave
 from app.ai.agents.faq import agent_faq
+from app.ai.agents.moderation_review import agent_moderation_review
 
 # TODO: Implement the ai_select_init, get_model (model getter) functions
 
@@ -43,6 +44,26 @@ def get_classifier_model() -> Agent:
     service = os.getenv("CLASSIFIER_AI_SERVICE")
     model = os.getenv("CLASSIFIER_MODEL")
     return ai_select_init(service, model)
+
+def get_moderation_review_model() -> Agent:
+    """Get the AI model for moderation review."""
+    service = os.getenv("MODERATION_REVIEW_AI_SERVICE", os.getenv("PRIMARY_AI_SERVICE"))
+    model = os.getenv("MODERATION_REVIEW_MODEL", os.getenv("PRIMARY_MODEL"))
+    return ai_select_init(service, model)
+
+def get_backup_moderation_review_model() -> Optional[Agent]:
+    """Get the backup AI model for moderation review if available."""
+    service = os.getenv("BACKUP_MODERATION_REVIEW_AI_SERVICE")
+    model = os.getenv("BACKUP_MODERATION_REVIEW_MODEL")
+    
+    if not service or not model:
+        return None
+        
+    try:
+        return ai_select_init(service, model)
+    except Exception as e:
+        print(f"Error initializing backup moderation review model: {e}")
+        return None
 
 async def create_classifier_agent() -> Agent:
     """Create a classifier agent with the appropriate model and prompt template."""
@@ -79,3 +100,20 @@ async def create_faq_agent() -> Agent:
     model = get_classifier_model()  # 使用主要模型，因為需要較強的語意理解能力
     agent = await agent_faq(model)
     return agent
+
+async def create_moderation_review_agent() -> Agent:
+    """Create a moderation review agent for evaluating flagged content."""
+    model = get_moderation_review_model()
+    agent = await agent_moderation_review(model)
+    return agent
+
+async def create_backup_moderation_review_agent() -> Optional[Agent]:
+    """Create a backup moderation review agent if available."""
+    model = get_backup_moderation_review_model()
+    if model:
+        try:
+            agent = await agent_moderation_review(model)
+            return agent
+        except Exception as e:
+            print(f"Error creating backup moderation review agent: {e}")
+    return None

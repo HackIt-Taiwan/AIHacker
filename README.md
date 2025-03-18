@@ -8,6 +8,8 @@
 - 邀請連結管理
 - 問題追蹤系統
 - FAQ 自動回應（整合 Notion）
+- 自動同步斜線命令（Slash Commands）
+- 增強的內容審核系統（含分級禁言）
 
 ## 環境要求
 
@@ -93,3 +95,32 @@ NOTION_FAQ_CHECK_ENABLED=True
 ## 授權
 
 MIT License 
+
+## 內容審核功能
+
+HackIt Discord Bot 支援使用 OpenAI 的 omni-moderation-latest 模型進行內容審核。此功能可以檢測並移除包含不適當內容的消息和圖片。
+
+主要特點：
+- 自動審核所有消息內容和圖片
+- 自動刪除違規內容
+- 向使用者發送通知（頻道臨時消息和私信）
+- 分級禁言系統（違規次數累計增加禁言時間）
+- 支援角色豁免機制
+
+[查看詳細文檔](docs/content_moderation.md)
+
+### 增強的內容審核系統
+
+我們最新的增強版內容審核系統提供更好的使用者體驗和自動化禁言處理：
+
+- 精美的UI設計，清晰呈現違規資訊
+- 分級禁言機制（5分鐘/12小時/7天/30天/1年）
+- 完整的社群規範，基於OpenAI的內容政策
+- 禁言期滿後自動恢復使用者權限
+- 支援所有OpenAI審核API返回的違規類型（包括下劃線格式）
+- 優化禁言處理流程，確保刪除訊息後立即禁言
+- 智能審核複查系統，避免歌曲名稱等文化內容被誤判為違規
+- 嚴重違規內容快速識別，自動跳過複雜評估過程以提高處理效率
+- 審核隊列系統，自動排隊處理大量消息，避免因API負載限制而漏審
+
+[查看增強版審核功能文檔](docs/enhanced_moderation.md) | [查看社群規範](docs/community_guidelines.md) | [最新更新: 違規類別對應](docs/updates/category_mapping_update.md) | [系統修復](docs/updates/moderation_fixes.md) | [審核複查系統](docs/updates/moderation_review.md) | [誤判處理優化](docs/updates/moderation_improvements.md) | [審核隊列系統](docs/updates/moderation_queue.md) 

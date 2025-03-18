@@ -476,6 +476,11 @@ class AIHandler:
     async def update_leave_announcements(self):
         """更新所有請假公告的狀態"""
         try:
+            # 確保 leave_manager 已初始化
+            if self._leave_manager is None:
+                print("警告：請假管理器尚未初始化，無法更新請假公告")
+                return
+                
             # 獲取所有活動的請假記錄
             leaves = self._leave_manager.get_all_active_leaves()
             

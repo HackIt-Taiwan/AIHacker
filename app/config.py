@@ -15,6 +15,9 @@ PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'gpt-4o')  # Default model
 CLASSIFIER_AI_SERVICE = os.getenv('CLASSIFIER_AI_SERVICE', 'gemini')  # Default to Gemini
 CLASSIFIER_MODEL = os.getenv('CLASSIFIER_MODEL', 'gemini-1.0-pro')  # Default model
 
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 # Azure OpenAI Configuration
 AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY')
 AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
@@ -101,6 +104,28 @@ CRAZY_TALK_ALLOWED_USERS = [int(id.strip()) for id in os.getenv('CRAZY_TALK_ALLO
 NOTION_API_KEY = os.getenv('NOTION_API_KEY')
 NOTION_FAQ_PAGE_ID = os.getenv('NOTION_FAQ_PAGE_ID')
 NOTION_FAQ_CHECK_ENABLED = os.getenv('NOTION_FAQ_CHECK_ENABLED', 'True').lower() == 'true'
+
+# Content Moderation Configuration
+CONTENT_MODERATION_ENABLED = os.getenv('CONTENT_MODERATION_ENABLED', 'True').lower() == 'true'
+CONTENT_MODERATION_NOTIFICATION_TIMEOUT = int(os.getenv('CONTENT_MODERATION_NOTIFICATION_TIMEOUT', '10'))  # seconds
+CONTENT_MODERATION_BYPASS_ROLES = [int(id.strip()) for id in os.getenv('CONTENT_MODERATION_BYPASS_ROLES', '').split(',') if id.strip()]  # Roles that bypass moderation
+MUTE_ROLE_NAME = os.getenv('MUTE_ROLE_NAME', 'Muted')  # Name of the role to use for muting users
+MUTE_ROLE_ID = int(os.getenv('MUTE_ROLE_ID', '0'))  # ID of the role to use for muting users
+
+# Moderation Review Configuration
+MODERATION_REVIEW_ENABLED = os.getenv('MODERATION_REVIEW_ENABLED', 'True').lower() == 'true'  # Whether to use moderation review
+MODERATION_REVIEW_AI_SERVICE = os.getenv('MODERATION_REVIEW_AI_SERVICE', PRIMARY_AI_SERVICE)  # AI service to use for review
+MODERATION_REVIEW_MODEL = os.getenv('MODERATION_REVIEW_MODEL', PRIMARY_MODEL)  # Model to use for review
+BACKUP_MODERATION_REVIEW_AI_SERVICE = os.getenv('BACKUP_MODERATION_REVIEW_AI_SERVICE', '')  # Backup AI service to use for review
+BACKUP_MODERATION_REVIEW_MODEL = os.getenv('BACKUP_MODERATION_REVIEW_MODEL', '')  # Backup model to use for review
+MODERATION_REVIEW_CONTEXT_MESSAGES = int(os.getenv('MODERATION_REVIEW_CONTEXT_MESSAGES', '3'))  # Number of previous messages to include as context
+
+# Moderation Queue Configuration
+MODERATION_QUEUE_ENABLED = os.getenv('MODERATION_QUEUE_ENABLED', 'True').lower() == 'true'  # 是否啟用審核隊列
+MODERATION_QUEUE_MAX_CONCURRENT = int(os.getenv('MODERATION_QUEUE_MAX_CONCURRENT', '3'))  # 最大並發處理數
+MODERATION_QUEUE_CHECK_INTERVAL = float(os.getenv('MODERATION_QUEUE_CHECK_INTERVAL', '1.0'))  # 隊列檢查間隔（秒）
+MODERATION_QUEUE_RETRY_INTERVAL = float(os.getenv('MODERATION_QUEUE_RETRY_INTERVAL', '5.0'))  # 重試間隔（秒）
+MODERATION_QUEUE_MAX_RETRIES = int(os.getenv('MODERATION_QUEUE_MAX_RETRIES', '5'))  # 最大重試次數
 
 # Message Types (for classifier)
 MESSAGE_TYPES = {

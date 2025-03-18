@@ -7,21 +7,30 @@ import random
 from typing import Dict, List
 from datetime import datetime, timedelta, timezone
 import re
+import os
+import logging
 
 from app.config import (
-    DISCORD_TOKEN, TYPING_INTERVAL, STREAM_CHUNK_SIZE,
-    RATE_LIMIT_MESSAGES, RATE_LIMIT_PERIOD, RATE_LIMIT_ERROR,
-    MAX_MESSAGE_LENGTH, MIN_MESSAGE_LENGTH, IGNORED_PREFIXES,
-    RANDOM_REPLY_CHANCE, STREAM_UPDATE_INTERVAL, STREAM_MIN_UPDATE_LENGTH,
-    STREAM_UPDATE_CHARS, SPLIT_CHARS, BOT_ACTIVITY, BOT_THINKING_MESSAGE,
-    BOT_RANDOM_THINKING_MESSAGE, CHAT_HISTORY_TARGET_CHARS,
-    CHAT_HISTORY_MAX_MESSAGES, HISTORY_PROMPT_TEMPLATE,
-    RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
-    WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE,
-    LEAVE_ALLOWED_ROLES, CRAZY_TALK_ALLOWED_USERS,
-    INVITE_ALLOWED_ROLES, QUESTION_CHANNEL_ID, QUESTION_EMOJI,
-    QUESTION_RESOLVER_ROLES, NOTION_FAQ_CHECK_ENABLED,
-    QUESTION_FAQ_FOUND_EMOJI, QUESTION_RESOLVED_EMOJI
+    DISCORD_TOKEN, PRIMARY_AI_SERVICE, PRIMARY_MODEL,
+    MUTE_ROLE_NAME, MUTE_ROLE_ID, TYPING_INTERVAL, STREAM_CHUNK_SIZE, 
+    RESPONSE_TIMEOUT, BOT_ACTIVITY, BOT_THINKING_MESSAGE, BOT_RANDOM_THINKING_MESSAGE,
+    WELCOME_CHANNEL_IDS, DEFAULT_WELCOME_MESSAGE, RATE_LIMIT_MESSAGES, 
+    RATE_LIMIT_PERIOD, RATE_LIMIT_ERROR, MAX_MESSAGE_LENGTH, MIN_MESSAGE_LENGTH,
+    IGNORED_PREFIXES, RANDOM_REPLY_CHANCE, STREAM_UPDATE_INTERVAL, 
+    STREAM_MIN_UPDATE_LENGTH, STREAM_UPDATE_CHARS, CHAT_HISTORY_TARGET_CHARS,
+    CHAT_HISTORY_MAX_MESSAGES, AI_MAX_RETRIES, AI_RETRY_DELAY, AI_ERROR_MESSAGE,
+    SPLIT_CHARS, REMINDER_CHECK_INTERVAL, LEAVE_ALLOWED_ROLES,
+    LEAVE_ANNOUNCEMENT_CHANNEL_IDS, INVITE_TIME_ZONE, INVITE_ALLOWED_ROLES,
+    INVITE_LIST_PAGE_SIZE, INVITE_LIST_MAX_PAGES, QUESTION_CHANNEL_ID, 
+    QUESTION_RESOLVER_ROLES, QUESTION_EMOJI, QUESTION_RESOLVED_EMOJI,
+    QUESTION_FAQ_FOUND_EMOJI, QUESTION_FAQ_PENDING_EMOJI, CRAZY_TALK_ALLOWED_USERS,
+    NOTION_API_KEY, NOTION_FAQ_PAGE_ID, NOTION_FAQ_CHECK_ENABLED,
+    CONTENT_MODERATION_ENABLED, CONTENT_MODERATION_BYPASS_ROLES,
+    CONTENT_MODERATION_NOTIFICATION_TIMEOUT, MUTE_ROLE_NAME, MUTE_ROLE_ID,
+    MODERATION_REVIEW_ENABLED, MODERATION_REVIEW_CONTEXT_MESSAGES,
+    MODERATION_QUEUE_ENABLED, MODERATION_QUEUE_MAX_CONCURRENT,
+    DB_ROOT, REMINDER_DB_PATH, WELCOMED_MEMBERS_DB_PATH, LEAVE_DB_PATH, INVITE_DB_PATH, QUESTION_DB_PATH,
+    HISTORY_PROMPT_TEMPLATE, RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -31,6 +40,7 @@ from app.leave_manager import LeaveManager
 from app.ai.agents.leave import agent_leave
 from app.invite_manager import InviteManager
 from app.question_manager import QuestionManager, QuestionView, FAQResponseView
+from app.mute_manager import MuteManager
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -49,6 +59,8 @@ welcomed_members_db = None
 leave_manager = None
 invite_manager = None
 notion_faq = None
+mute_manager = None  # Added for mute management
+question_manager = None  # Add this line to fix the error
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -99,86 +111,109 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
-    """Event handler for when the bot is ready"""
-    print(f'Logged in as {bot.user.name}')
+    print(f'Bot is ready. Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
     
-    # Set bot activity status
-    if BOT_ACTIVITY:
-        await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
+    # Set bot activity
+    activity = discord.Activity(type=discord.ActivityType.watching, name=BOT_ACTIVITY)
+    await bot.change_presence(activity=activity)
     
-    # Initialize global variables
-    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager, notion_faq
+    # Create command tree for slash commands
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
     
-    if reminder_manager is None:
-        print("Initializing reminder manager")
-        reminder_manager = ReminderManager(bot)
-        reminder_manager.start()
-    
-    if ai_handler is None:
-        print("Initializing AI handler")
-        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
-        # Start leave announcement updater
-        asyncio.create_task(ai_handler.start_leave_announcement_updater())
-    
-    if welcomed_members_db is None:
-        print("Initializing welcome database")
-        welcomed_members_db = WelcomedMembersDB()
-    
-    if leave_manager is None:
-        print("Initializing leave manager")
-        leave_manager = LeaveManager()
-    
-    if invite_manager is None:
-        print("Initializing invite manager")
-        invite_manager = InviteManager()
+    # Get guild list
+    guilds = bot.guilds
+    for guild in guilds:
+        print(f"Connected to guild: {guild.name} (ID: {guild.id})")
         
-    if notion_faq is None and NOTION_FAQ_CHECK_ENABLED:
-        print("Initializing Notion FAQ service")
-        from app.services.notion_faq import NotionFAQ
-        notion_faq = NotionFAQ()
-
-    # Register permanent button views
-    print("Registering permanent buttons")
-    # Register generic view for handling existing buttons
-    bot.add_view(QuestionView(0))
-    bot.add_view(FAQResponseView(0))  # Add generic FAQ response view
+    # Print number of members in cache
+    member_count = sum(len(guild.members) for guild in guilds)
+    print(f"Total members in cache: {member_count}")
     
-    # Get all questions and register their buttons
+    # Initialize question manager and register existing buttons
+    global question_manager
+    from app.question_manager import QuestionManager, QuestionView, FAQResponseView
     question_manager = QuestionManager()
-    questions = question_manager.get_all_questions_with_state()
-    active_count = 0
-    for question in questions:
-        # 跳過已解決的問題
-        if question['is_resolved']:
-            continue
-            
-        # 跳過超過12小時有FAQ但沒有回應的問題（這些會被自動解決）
-        if (question['has_pending_faq'] and 
-            question.get('faq_response_at') and 
-            datetime.now(timezone.utc) - datetime.fromisoformat(question['faq_response_at']) > timedelta(hours=12)):
-            continue
-            
-        # 註冊問題解決按鈕
-        view = QuestionView.create_for_question(question['id'], question['is_resolved'])
-        bot.add_view(view)
+    
+    # Add generic question view for handling existing buttons
+    # these views will handle interactions from existing messages
+    bot.add_view(QuestionView())  # Add generic view for handling existing buttons
+    bot.add_view(FAQResponseView())  # Add generic FAQ response view without parameters
+    
+    # Get all questions from the database and add persistent views for them
+    try:
+        questions = question_manager.get_all_questions_with_state()
+        if questions:
+            count = 0
+            for question in questions:
+                # Skip resolved questions
+                if question.get('is_resolved'):
+                    continue
+                
+                # Register question resolution buttons
+                view = QuestionView.create_for_question(question['id'])
+                bot.add_view(view)
+                
+                # Register FAQ response buttons if applicable
+                if question.get('has_faq'):
+                    faq_view = FAQResponseView(question['id'])
+                    bot.add_view(faq_view)
+                count += 1
+            print(f"Registered buttons for {count} active questions")
+    except Exception as e:
+        print(f"Failed to register question buttons: {e}")
+    
+    # Initialize MuteManager
+    global mute_manager
+    from app.mute_manager import MuteManager
+    mute_manager = MuteManager(bot, MUTE_ROLE_NAME or "Muted")
+    
+    # Initialize other managers
+    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager
+    
+    # Initialize AI handler
+    from app.ai_handler import AIHandler
+    ai_handler = AIHandler()
+    
+    # Initialize welcomed members database
+    from app.welcomed_members_db import WelcomedMembersDB
+    welcomed_members_db = WelcomedMembersDB()
+    
+    # Initialize reminder manager
+    from app.reminder_manager import ReminderManager
+    reminder_manager = ReminderManager(bot)
+    
+    # Initialize leave manager
+    from app.leave_manager import LeaveManager
+    leave_manager = LeaveManager()
+    
+    # Initialize invite manager
+    from app.invite_manager import InviteManager
+    invite_manager = InviteManager()
+    
+    # Initialize Notion FAQ integration if enabled
+    if NOTION_FAQ_CHECK_ENABLED:
+        from app.services.notion_faq import NotionFAQ
+        global notion_faq
+        notion_faq = NotionFAQ()
+    
+    # Start background tasks
+    bot.loop.create_task(reminder_manager.check_reminders())
+    bot.loop.create_task(check_auto_resolve_faqs())
+    bot.loop.create_task(check_expired_mutes())
+    bot.loop.create_task(retry_welcome_messages())
+    
+    # Initialize moderation queue if enabled
+    if MODERATION_QUEUE_ENABLED:
+        from app.services.moderation_queue import moderation_queue
+        bot.loop.create_task(moderation_queue.start())
+        print(f"Moderation queue started with max concurrent tasks: {MODERATION_QUEUE_MAX_CONCURRENT}")
         
-        # 註冊 FAQ 回應按鈕（如果有的話）
-        if question.get('has_faq'):
-            faq_view = FAQResponseView(question['id'], question['is_resolved'])
-            bot.add_view(faq_view)
-            
-        active_count += 1
-            
-    print(f"Registered {active_count} active question buttons")
-
-    # Start FAQ auto-resolve checker
-    asyncio.create_task(check_auto_resolve_faqs())
-
-    # Bot was offline for a while, welcome members who joined while offline
-    last_online = datetime.now(timezone.utc) - timedelta(days=1)
-    await send_welcome_to_offline_members(last_online)
-
-    print("Bot is ready!")
+    print("Bot is fully initialized and ready!")
 
 async def send_welcome_to_offline_members(last_online):
     print("Checking for members who joined while bot was offline...")
@@ -382,9 +417,20 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Process commands first
+    # Process bot commands
     await bot.process_commands(message)
-    if message.content.startswith('!'):
+    
+    # Check moderation 
+    if CONTENT_MODERATION_ENABLED and (not message.author.bot):
+        # 使用審核隊列處理消息
+        if MODERATION_QUEUE_ENABLED:
+            from app.services.moderation_queue import moderation_queue
+            await moderate_message_queue(message)
+        else:
+            await moderate_message(message)
+
+    # Ignore messages with command prefixes, regardless of case
+    if message.content and message.content.lower().startswith(IGNORED_PREFIXES):
         return
 
     # Check if message is in question channel
@@ -483,6 +529,25 @@ async def on_message(message):
           random.random() < RANDOM_REPLY_CHANCE):
         print(f"觸發隨機回覆，訊息: {message.content}")
         await handle_ai_response(message, is_random=True)
+
+@bot.event
+async def on_message_edit(before, after):
+    # Ignore edits by the bot itself
+    if after.author == bot.user:
+        return
+        
+    # If content moderation is enabled, moderate the edited message
+    if CONTENT_MODERATION_ENABLED and (not after.author.bot):
+        # 使用審核隊列處理編輯後的消息
+        if MODERATION_QUEUE_ENABLED:
+            from app.services.moderation_queue import moderation_queue
+            await moderate_message_queue(after, is_edit=True)
+        else:
+            await moderate_message(after, is_edit=True)
+            
+    # If the edited message mentions the bot, update response
+    if bot.user.mentioned_in(after) and before.content != after.content:
+        await handle_mention(after)
 
 async def handle_mention(message):
     """Handle when bot is mentioned"""
@@ -885,13 +950,409 @@ async def check_auto_resolve_faqs():
         
         await asyncio.sleep(3600)  # Check every hour
 
-def main():
+async def check_expired_mutes():
+    """Periodically check for expired mutes and remove them."""
+    await bot.wait_until_ready()
+    
+    while not bot.is_closed():
+        try:
+            if mute_manager:
+                await mute_manager.check_expired_mutes()
+        except Exception as e:
+            print(f"Error checking expired mutes: {e}")
+        
+        # Check every minute
+        await asyncio.sleep(60)
+
+async def moderate_message_queue(message, is_edit=False):
+    """Add message to moderation queue for processing"""
+    if message.author.bot:
+        return  # Skip bot messages
+    
+    # Add to moderation queue
+    from app.services.moderation_queue import moderation_queue
+    
+    # Prepare task data
+    task_data = {
+        "message": message,
+        "is_edit": is_edit
+    }
+    
+    # Add task to the queue
+    moderation_queue.add_moderation_task(
+        task_func=moderate_message,
+        task_data=task_data,
+        task_id=f"mod_{message.id}_{int(time.time())}"
+    )
+
+async def moderate_message(message, is_edit=False):
+    """
+    Moderate message content using OpenAI's moderation API.
+    If content is flagged, delete the message, notify the user, and apply appropriate muting.
+    
+    Args:
+        message: The Discord message to moderate
+        is_edit: Whether this is an edited message
+    """
+    # Ignore messages from the bot itself
+    if message.author == bot.user:
+        return
+    
+    # Skip moderation for messages from users with bypass roles
+    if any(role.id in CONTENT_MODERATION_BYPASS_ROLES for role in message.author.roles):
+        return
+        
+    # Get message author and content
+    author = message.author
+    text = message.content.strip()
+    attachments = message.attachments
+    action_type = "edited" if is_edit else "sent"
+    
+    # Skip empty messages
+    if not text and not attachments:
+        return
+
+    from app.ai.service.moderation import ContentModerator
+    
+    # Initialize the moderator
+    moderator = ContentModerator()
+    
+    # Collect all content for moderation
+    image_urls = [attachment.url for attachment in attachments 
+                   if attachment.content_type and attachment.content_type.startswith('image/')]
+    
+    # Skip if no content to moderate
+    if not text and not image_urls:
+        return
+    
     try:
-        bot.run(DISCORD_TOKEN)
-    finally:
-        # Stop reminder manager
-        if reminder_manager:
-            reminder_manager.stop()
+        # Moderate content
+        is_flagged, results = await moderator.moderate_content(text, image_urls)
+        
+        if is_flagged:
+            # Save channel and author information before deletion
+            channel = message.channel
+            guild = message.guild
             
+            # Extract violation categories
+            violation_categories = []
+            
+            # Check text violations
+            if results.get("text_result") and results["text_result"].get("categories"):
+                categories = results["text_result"]["categories"]
+                for category, is_violated in categories.items():
+                    if is_violated:
+                        violation_categories.append(category)
+            
+            # Check image violations
+            for image_result in results.get("image_results", []):
+                if image_result.get("result") and image_result["result"].get("categories"):
+                    categories = image_result["result"]["categories"]
+                    for category, is_violated in categories.items():
+                        if is_violated and category not in violation_categories:
+                            violation_categories.append(category)
+            
+            # If review is enabled, check if the flagged content is a false positive
+            review_result = None
+            if MODERATION_REVIEW_ENABLED and text:
+                from app.ai.agents.moderation_review import review_flagged_content
+                from app.ai.ai_select import create_moderation_review_agent
+                
+                try:
+                    # Get message context (previous messages)
+                    context = ""
+                    if hasattr(message.channel, 'history'):
+                        context_messages = []
+                        async for msg in message.channel.history(limit=MODERATION_REVIEW_CONTEXT_MESSAGES + 1):
+                            if msg.id != message.id:
+                                context_messages.append(f"{msg.author.name}: {msg.content}")
+                                if len(context_messages) >= MODERATION_REVIEW_CONTEXT_MESSAGES:
+                                    break
+                        
+                        if context_messages:
+                            context = "最近的訊息（從舊到新）：\n" + "\n".join(reversed(context_messages))
+                    
+                    # Create the moderation review agent
+                    review_agent = await create_moderation_review_agent()
+                    
+                    # 嘗試創建備用審核代理
+                    backup_review_agent = None
+                    try:
+                        from app.ai.ai_select import create_backup_moderation_review_agent
+                        backup_review_agent = await create_backup_moderation_review_agent()
+                        if backup_review_agent:
+                            print(f"[審核系統] 已準備備用審核服務")
+                    except Exception as e:
+                        print(f"[審核系統] 準備備用審核服務失敗: {e}")
+                    
+                    # 檢查是否嚴重違規內容（短消息且含有攻擊性詞彙）
+                    # 這類內容可能導致AI拒絕回應或回應空白
+                    severe_violation_terms = [
+                        "強姦", "自殺", "殺人", "低能兒", "死", "去死", "操你", "幹你", "吸毒",
+                        "fuck you", "kill yourself", "kys", "rape", "自殘", "毒品",
+                        "傻逼", "垃圾", "廢物", "智障", "腦殘", "賤", "賣淫"
+                    ]
+                    
+                    if len(text) < 30 and any(term in text.lower() for term in severe_violation_terms):
+                        print(f"[審核系統] 檢測到短消息嚴重違規內容，跳過複雜評估")
+                        review_result = {
+                            "is_violation": True,
+                            "reason": "消息內容簡短且包含明顯違規詞彙，系統判定為違規。",
+                            "original_response": "SEVERE_VIOLATION: Direct detection"
+                        }
+                    else:
+                        # Review the flagged content
+                        review_result = await review_flagged_content(
+                            agent=review_agent,
+                            content=text,
+                            violation_categories=violation_categories,
+                            context=context,
+                            backup_agent=backup_review_agent
+                        )
+                    
+                    print(f"[審核系統] 用戶 {author.name} 的訊息審核結果: {'非違規(誤判)' if not review_result['is_violation'] else '確認違規'}")
+                    
+                    # If the review agent determined it's a false positive, don't delete or punish
+                    if not review_result["is_violation"]:
+                        print(f"[審核系統] 誤判原因: {review_result['reason'][:100]}")
+                        # 不對誤判做任何處理，直接返回
+                        return
+                        
+                except Exception as review_error:
+                    print(f"[審核系統] 執行審核時出錯: {str(review_error)}")
+                    # 嚴重違規內容可能引起評估錯誤，我們應該更保守地處理
+                    # 檢查是否為多類型違規或含有嚴重違規詞彙
+                    severe_terms = ["強姦", "自殺", "殺人", "死", "操", "幹", "fuck", "kill", "rape"]
+                    has_severe_term = text and any(term in text.lower() for term in severe_terms)
+                    
+                    if len(violation_categories) >= 3 or has_severe_term:
+                        print(f"[審核系統] 評估失敗但檢測到嚴重違規指標，視為違規")
+                        review_result = {
+                            "is_violation": True,
+                            "reason": f"評估過程出錯，但內容觸發了多種違規類型({', '.join(violation_categories[:3])})或包含嚴重違規詞彙，系統判定為違規。",
+                            "original_response": f"ERROR: {str(review_error)}"
+                        }
+                    # 在其他情況下，繼續常規審核流程，無review_result
+            
+            # Delete the message (only happens if the review agent confirms it's a violation or review is disabled)
+            try:
+                # 只有當審核結果確認為真正違規時才刪除消息，否則保留
+                if review_result is None or review_result["is_violation"]:
+                    await message.delete()
+                    print(f"[審核系統] 已刪除標記為違規的{action_type}消息，用戶: {author.name}")
+                else:
+                    # 如果被判定為誤判，不刪除消息也不通知用戶
+                    print(f"[審核系統] 消息被標記但審核確認為誤判，已保留。用戶: {author.name}")
+                    return
+            except Exception as e:
+                print(f"[審核系統] 刪除消息失敗: {str(e)}")
+                return
+            
+            # IMPORTANT: Apply muting only if content is confirmed as violation
+            mute_success = False
+            mute_reason = ""
+            if mute_manager and (review_result is None or review_result["is_violation"]):
+                try:
+                    mute_success, mute_reason = await mute_manager.mute_user(
+                        user=author,
+                        violation_categories=violation_categories,
+                        content=text,
+                        details=results
+                    )
+                    print(f"[審核系統] 用戶 {author.name} 禁言狀態: {mute_success}")
+                except Exception as mute_error:
+                    print(f"[審核系統] 禁言用戶 {author.name} 時出錯: {str(mute_error)}")
+            
+            # Create channel notification (simple version)
+            try:
+                # Send a notification message in the channel
+                notification_embed = discord.Embed(
+                    title="⚠️ 內容審核通知",
+                    description=f"<@{author.id}> 您的訊息已被系統移除，因為它含有違反社群規範的內容。",
+                    color=discord.Color.red()
+                )
+                
+                # Add review result if available
+                if review_result and review_result["is_violation"]:
+                    notification_embed.add_field(
+                        name="審核結果",
+                        value=review_result["reason"][:1000],  # 限制長度避免超過 Discord 限制
+                        inline=False
+                    )
+                
+                channel_notification = await channel.send(
+                    embed=notification_embed
+                )
+                
+                # Delete the notification after a short delay
+                await asyncio.sleep(CONTENT_MODERATION_NOTIFICATION_TIMEOUT)
+                await channel_notification.delete()
+            except Exception as e:
+                print(f"Failed to send channel notification: {str(e)}")
+            
+            # Send direct message with detailed information and a nice UI
+            try:
+                # Create a visually appealing embed for the DM
+                dm_embed = discord.Embed(
+                    title="🛡️ 內容審核通知",
+                    description=f"您在 **{guild.name}** {action_type}的訊息因含有不適當內容而被移除。",
+                    color=discord.Color.from_rgb(230, 126, 34)  # Warm orange color
+                )
+                
+                # Add review result if available
+                if review_result and review_result["is_violation"]:
+                    dm_embed.add_field(
+                        name="審核結果",
+                        value=review_result["reason"][:1000],  # 限制長度避免超過 Discord 限制
+                        inline=False
+                    )
+                
+                # Add server icon if available
+                if guild.icon:
+                    dm_embed.set_thumbnail(url=guild.icon.url)
+                
+                dm_embed.timestamp = datetime.now(timezone.utc)
+                
+                # Add violation types with emoji indicators and Chinese translations
+                if violation_categories:
+                    # Map categories to Chinese with emojis (both slash format and underscore format)
+                    category_map = {
+                        # Underscore format (as returned by API)
+                        "harassment": "😡 騷擾內容",
+                        "harassment_threatening": "🔪 威脅性騷擾",
+                        "hate": "💢 仇恨言論",
+                        "hate_threatening": "⚠️ 威脅性仇恨言論",
+                        "self_harm": "💔 自我傷害相關內容",
+                        "self_harm_intent": "🆘 自我傷害意圖",
+                        "self_harm_instructions": "⛔ 自我傷害指導",
+                        "sexual": "🔞 性相關內容",
+                        "sexual_minors": "🚫 未成年相關性內容",
+                        "violence": "👊 暴力內容",
+                        "violence_graphic": "🩸 圖像化暴力內容",
+                        "illicit": "🚫 不法行為",
+                        "illicit_violent": "💣 暴力不法行為",
+                        
+                        # Slash format (original)
+                        "harassment/threatening": "🔪 威脅性騷擾",
+                        "hate/threatening": "⚠️ 威脅性仇恨言論",
+                        "self-harm": "💔 自我傷害相關內容",
+                        "self-harm/intent": "🆘 自我傷害意圖",
+                        "self-harm/instructions": "⛔ 自我傷害指導",
+                        "sexual/minors": "🚫 未成年相關性內容",
+                        "violence/graphic": "🩸 圖像化暴力內容",
+                        "illicit/violent": "💣 暴力不法行為",
+                    }
+                    
+                    violation_list = []
+                    for category in violation_categories:
+                        category_text = category_map.get(category, f"❌ 違規內容: {category}")
+                        violation_list.append(category_text)
+                    
+                    dm_embed.add_field(
+                        name="違規類型",
+                        value="\n".join(violation_list),
+                        inline=False
+                    )
+                
+                # Add channel information
+                dm_embed.add_field(
+                    name="📝 頻道",
+                    value=f"#{channel.name}",
+                    inline=True
+                )
+                
+                # Add violation count if available
+                if mute_manager:
+                    violation_count = mute_manager.db.get_violation_count(author.id, guild.id)
+                    dm_embed.add_field(
+                        name="🔢 違規次數",
+                        value=f"這是您的第 **{violation_count}** 次違規",
+                        inline=True
+                    )
+                
+                # Add a divider
+                dm_embed.add_field(
+                    name="",
+                    value="━━━━━━━━━━━━━━━━━━━━━━━",
+                    inline=False
+                )
+                
+                # Add the original content that was flagged
+                if text:
+                    # Truncate text if too long
+                    display_text = text if len(text) <= 1000 else text[:997] + "..."
+                    dm_embed.add_field(
+                        name="📄 訊息內容",
+                        value=f"```\n{display_text}\n```",
+                        inline=False
+                    )
+                
+                if image_urls:
+                    dm_embed.add_field(
+                        name="🖼️ 附件",
+                        value=f"包含 {len(image_urls)} 張圖片",
+                        inline=False
+                    )
+                
+                # Add another divider
+                dm_embed.add_field(
+                    name="",
+                    value="━━━━━━━━━━━━━━━━━━━━━━━━",
+                    inline=False
+                )
+                
+                # Add mute information if muted
+                if mute_success:
+                    dm_embed.add_field(
+                        name="🔇 禁言處置",
+                        value=mute_reason,
+                        inline=False
+                    )
+                
+                # Add note and resources
+                dm_embed.add_field(
+                    name="📋 請注意",
+                    value="請確保您發送的內容符合社群規範。重複違規可能導致更嚴重的處罰。\n\n如果您對此決定有疑問，請聯繫伺服器管理員。",
+                    inline=False
+                )
+                
+                # Add guidelines link
+                dm_embed.add_field(
+                    name="📚 社群規範",
+                    value=f"請閱讀我們的[社群規範](https://discord.com/channels/{guild.id}/rules)以了解更多資訊。",
+                    inline=False
+                )
+                
+                # Send the DM
+                await author.send(embed=dm_embed)
+            except Exception as e:
+                print(f"Failed to send DM: {str(e)}")
+    except Exception as e:
+        print(f"Error in content moderation: {str(e)}")
+        # Log the error but don't raise, to avoid interrupting normal bot operation
+
+def main():
+    """Main function to run the Discord bot"""
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("discord_bot.log"),
+            logging.StreamHandler()
+        ]
+    )
+    
+    # Ensure database directories exist
+    os.makedirs(os.path.join(DB_ROOT, 'questions'), exist_ok=True)
+    os.makedirs(os.path.join(DB_ROOT, 'welcomed_members'), exist_ok=True)
+    os.makedirs(os.path.join(DB_ROOT, 'invites'), exist_ok=True)
+    os.makedirs(os.path.join(DB_ROOT, 'leaves'), exist_ok=True)
+    os.makedirs(os.path.join(DB_ROOT, 'reminders'), exist_ok=True)
+    os.makedirs(os.path.join(DB_ROOT, 'mutes'), exist_ok=True)
+    
+    # Run the bot
+    bot.run(DISCORD_TOKEN)
+
 if __name__ == "__main__":
     main() 
