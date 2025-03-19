@@ -6,6 +6,6 @@ pydantic>=2.6.1
 pydantic-ai>=0.1.0
 pytz>=2024.1
 notion-client
-aiohttp==3.9.3
+aiohttp>=3.8.4
 async-timeout==4.0.3
 tavily-python==0.5.0

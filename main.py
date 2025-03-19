@@ -30,7 +30,8 @@ from app.config import (
     MODERATION_REVIEW_ENABLED, MODERATION_REVIEW_CONTEXT_MESSAGES,
     MODERATION_QUEUE_ENABLED, MODERATION_QUEUE_MAX_CONCURRENT,
     DB_ROOT, REMINDER_DB_PATH, WELCOMED_MEMBERS_DB_PATH, LEAVE_DB_PATH, INVITE_DB_PATH, QUESTION_DB_PATH,
-    HISTORY_PROMPT_TEMPLATE, RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE
+    HISTORY_PROMPT_TEMPLATE, RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
+    URL_SAFETY_CHECK_ENABLED
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
@@ -41,6 +42,9 @@ from app.ai.agents.leave import agent_leave
 from app.invite_manager import InviteManager
 from app.question_manager import QuestionManager, QuestionView, FAQResponseView
 from app.mute_manager import MuteManager
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -200,6 +204,14 @@ async def on_ready():
         from app.services.notion_faq import NotionFAQ
         global notion_faq
         notion_faq = NotionFAQ()
+    
+    # Load moderation commands
+    try:
+        from app.moderation.mod_commands import setup
+        await setup(bot)
+        print("Moderation commands loaded successfully")
+    except Exception as e:
+        print(f"Failed to load moderation commands: {e}")
     
     # Start background tasks
     bot.loop.create_task(reminder_manager.check_reminders())
@@ -535,7 +547,7 @@ async def on_message_edit(before, after):
     # Ignore edits by the bot itself
     if after.author == bot.user:
         return
-        
+    
     # If content moderation is enabled, moderate the edited message
     if CONTENT_MODERATION_ENABLED and (not after.author.bot):
         # 使用審核隊列處理編輯後的消息
@@ -544,7 +556,7 @@ async def on_message_edit(before, after):
             await moderate_message_queue(after, is_edit=True)
         else:
             await moderate_message(after, is_edit=True)
-            
+    
     # If the edited message mentions the bot, update response
     if bot.user.mentioned_in(after) and before.content != after.content:
         await handle_mention(after)
@@ -1001,7 +1013,7 @@ async def moderate_message(message, is_edit=False):
     # Skip moderation for messages from users with bypass roles
     if any(role.id in CONTENT_MODERATION_BYPASS_ROLES for role in message.author.roles):
         return
-        
+    
     # Get message author and content
     author = message.author
     text = message.content.strip()
@@ -1010,26 +1022,159 @@ async def moderate_message(message, is_edit=False):
     
     # Skip empty messages
     if not text and not attachments:
-        return
-
-    from app.ai.service.moderation import ContentModerator
+            return
     
-    # Initialize the moderator
+    # Check for URLs if enabled
+    url_check_result = None
+    if URL_SAFETY_CHECK_ENABLED and text:
+        from app.ai.service.url_safety import URLSafetyChecker
+        try:
+            url_checker = URLSafetyChecker()
+            urls = await url_checker.extract_urls(text)
+            
+            if urls:
+                logger.info(f"Checking {len(urls)} URLs in message from {author.name}")
+                is_unsafe, url_results = await url_checker.check_urls(urls)
+                
+                # Log the detailed results for each URL
+                for url, result in url_results.items():
+                    is_url_unsafe = result.get('is_unsafe', False)
+                    try:
+                        if is_url_unsafe:
+                            threat_types = result.get('threat_types', [])
+                            severity = result.get('severity', 0)
+                            redirected_to = result.get('redirected_to', None)
+                            reason = result.get('reason', '')
+                            
+                            # Safe joining of threat types
+                            threat_types_text = ""
+                            try:
+                                threat_types_text = ', '.join(threat_types)
+                            except Exception:
+                                threat_types_text = "[格式化錯誤]"
+                            
+                            # Format the log message with appropriate error handling
+                            if redirected_to:
+                                logger.warning(
+                                    f"URL安全檢查結果: {url} → {redirected_to} | 不安全: {is_url_unsafe} | "
+                                    f"威脅類型: {threat_types_text} | 嚴重度: {severity}" + 
+                                    (f" | 原因: {reason}" if reason else "")
+                                )
+                            else:
+                                logger.warning(
+                                    f"URL安全檢查結果: {url} | 不安全: {is_url_unsafe} | "
+                                    f"威脅類型: {threat_types_text} | 嚴重度: {severity}" + 
+                                    (f" | 原因: {reason}" if reason else "")
+                                )
+                        else:
+                            # 對於安全URL，記錄更簡潔的信息
+                            message_text = result.get('message', '安全')
+                            logger.info(f"URL安全檢查結果: {url} | 安全 | {message_text}")
+                    except Exception as log_error:
+                        # Fallback logging if any encoding or formatting errors occur
+                        print(f"URL detail logging error: {str(log_error)}")
+                        try:
+                            logger.info(f"URL安全檢查結果: [URL記錄錯誤] | 狀態: {'不安全' if is_url_unsafe else '安全'}")
+                        except:
+                            logger.info("URL安全檢查結果記錄失敗")
+                
+                if is_unsafe:
+                    # One or more URLs are unsafe
+                    unsafe_urls = [url for url, result in url_results.items() if result.get('is_unsafe')]
+                    threat_types = set()
+                    max_severity = 0
+                    reasons = set()
+                    
+                    for url, result in url_results.items():
+                        if result.get('is_unsafe'):
+                            # Collect all threat types
+                            url_threats = result.get('threat_types', [])
+                            for threat in url_threats:
+                                threat_types.add(threat)
+                            
+                            # Track maximum severity
+                            severity = result.get('severity', 0)
+                            max_severity = max(max_severity, severity)
+                            
+                            # Collect reasons if available
+                            reason = result.get('reason')
+                            if reason:
+                                reasons.add(reason)
+                    
+                    url_check_result = {
+                        "is_unsafe": True,
+                        "unsafe_urls": unsafe_urls,
+                        "threat_types": list(threat_types),
+                        "severity": max_severity,
+                        "reasons": list(reasons) if reasons else None,
+                        "results": url_results
+                    }
+                    
+                    # Safely join reasons and threat types for logging
+                    reason_text = ""
+                    if reasons:
+                        try:
+                            reason_text = f" | 原因: {', '.join(reasons)}"
+                        except Exception as e:
+                            reason_text = " | 原因: [格式化錯誤]"
+                            print(f"Reason formatting error: {str(e)}")
+                    
+                    threat_text = ""
+                    if threat_types:
+                        try:
+                            threat_text = ', '.join(list(threat_types))
+                        except Exception as e:
+                            threat_text = "[格式化錯誤]"
+                            print(f"Threat type formatting error: {str(e)}")
+                    
+                    # Safe URL count logging
+                    try:
+                        url_count = len(urls) if urls else 0
+                        unsafe_count = len(unsafe_urls) if unsafe_urls else 0
+                        logger.warning(
+                            f"URL安全檢查摘要: 用戶 {author.name}的訊息中檢測到 "
+                            f"{unsafe_count}/{url_count} 個不安全URL | 威脅類型: {threat_text}{reason_text}"
+                        )
+                    except Exception as log_error:
+                        # Fallback for any logging errors
+                        print(f"URL safety logging error: {str(log_error)}")
+                        logger.warning("URL安全檢查檢測到不安全URL (詳細信息記錄失敗)")
+                    
+                    # If URL is unsafe, we'll continue with deletion and notification below
+                    # after both URL and content checks are complete
+                else:
+                    logger.info(f"URL安全檢查摘要: 用戶 {author.name}的訊息中的所有URL ({len(urls)}個) 都是安全的")
+        except Exception as e:
+            logger.error(f"URL安全檢查錯誤: {str(e)}")
+
+    # Initialize the content moderator for text and images
+    from app.ai.service.moderation import ContentModerator
     moderator = ContentModerator()
     
     # Collect all content for moderation
-    image_urls = [attachment.url for attachment in attachments 
-                   if attachment.content_type and attachment.content_type.startswith('image/')]
+    image_urls = []
     
-    # Skip if no content to moderate
-    if not text and not image_urls:
+    # Add attachment URLs
+    for attachment in attachments:
+        if attachment.content_type and attachment.content_type.startswith('image/'):
+            image_urls.append(attachment.url)
+    
+    # Add image URLs from message content
+    if text:
+        # Extract image URLs from message content
+        image_url_pattern = r'https?://[^\s<>"]+?\.(?:png|jpg|jpeg|gif|webp)'
+        image_urls.extend(re.findall(image_url_pattern, text, re.IGNORECASE))
+    
+    # Skip if no content to moderate and no unsafe URLs
+    if (not text and not image_urls) and not (url_check_result and url_check_result.get('is_unsafe')):
         return
     
     try:
-        # Moderate content
+        # Moderate content (text and images)
         is_flagged, results = await moderator.moderate_content(text, image_urls)
         
-        if is_flagged:
+        # If either content is flagged or URLs are unsafe, take action
+        if is_flagged or (url_check_result and url_check_result.get('is_unsafe')):
             # Save channel and author information before deletion
             channel = message.channel
             guild = message.guild
@@ -1037,11 +1182,18 @@ async def moderate_message(message, is_edit=False):
             # Extract violation categories
             violation_categories = []
             
+            # Add URL threat types to violation categories if applicable
+            if url_check_result and url_check_result.get('is_unsafe'):
+                for threat_type in url_check_result.get('threat_types', []):
+                    violation_category = threat_type.lower()  # Convert PHISHING to phishing, etc.
+                    if violation_category not in violation_categories:
+                        violation_categories.append(violation_category)
+            
             # Check text violations
             if results.get("text_result") and results["text_result"].get("categories"):
                 categories = results["text_result"]["categories"]
                 for category, is_violated in categories.items():
-                    if is_violated:
+                    if is_violated and category not in violation_categories:
                         violation_categories.append(category)
             
             # Check image violations
@@ -1052,9 +1204,9 @@ async def moderate_message(message, is_edit=False):
                         if is_violated and category not in violation_categories:
                             violation_categories.append(category)
             
-            # If review is enabled, check if the flagged content is a false positive
+            # If review is enabled and this is not a URL safety issue, check if the flagged content is a false positive
             review_result = None
-            if MODERATION_REVIEW_ENABLED and text:
+            if MODERATION_REVIEW_ENABLED and text and not (url_check_result and url_check_result.get('is_unsafe')):
                 from app.ai.agents.moderation_review import review_flagged_content
                 from app.ai.ai_select import create_moderation_review_agent
                 
@@ -1085,30 +1237,14 @@ async def moderate_message(message, is_edit=False):
                     except Exception as e:
                         print(f"[審核系統] 準備備用審核服務失敗: {e}")
                     
-                    # 檢查是否嚴重違規內容（短消息且含有攻擊性詞彙）
-                    # 這類內容可能導致AI拒絕回應或回應空白
-                    severe_violation_terms = [
-                        "強姦", "自殺", "殺人", "低能兒", "死", "去死", "操你", "幹你", "吸毒",
-                        "fuck you", "kill yourself", "kys", "rape", "自殘", "毒品",
-                        "傻逼", "垃圾", "廢物", "智障", "腦殘", "賤", "賣淫"
-                    ]
-                    
-                    if len(text) < 30 and any(term in text.lower() for term in severe_violation_terms):
-                        print(f"[審核系統] 檢測到短消息嚴重違規內容，跳過複雜評估")
-                        review_result = {
-                            "is_violation": True,
-                            "reason": "消息內容簡短且包含明顯違規詞彙，系統判定為違規。",
-                            "original_response": "SEVERE_VIOLATION: Direct detection"
-                        }
-                    else:
-                        # Review the flagged content
-                        review_result = await review_flagged_content(
-                            agent=review_agent,
-                            content=text,
-                            violation_categories=violation_categories,
-                            context=context,
-                            backup_agent=backup_review_agent
-                        )
+                    # Review the flagged content using OpenAI mod + LLM
+                    review_result = await review_flagged_content(
+                        agent=review_agent,
+                        content=text,
+                        violation_categories=violation_categories,
+                        context=context,
+                        backup_agent=backup_review_agent
+                    )
                     
                     print(f"[審核系統] 用戶 {author.name} 的訊息審核結果: {'非違規(誤判)' if not review_result['is_violation'] else '確認違規'}")
                     
@@ -1120,19 +1256,29 @@ async def moderate_message(message, is_edit=False):
                         
                 except Exception as review_error:
                     print(f"[審核系統] 執行審核時出錯: {str(review_error)}")
-                    # 嚴重違規內容可能引起評估錯誤，我們應該更保守地處理
-                    # 檢查是否為多類型違規或含有嚴重違規詞彙
-                    severe_terms = ["強姦", "自殺", "殺人", "死", "操", "幹", "fuck", "kill", "rape"]
-                    has_severe_term = text and any(term in text.lower() for term in severe_terms)
-                    
-                    if len(violation_categories) >= 3 or has_severe_term:
-                        print(f"[審核系統] 評估失敗但檢測到嚴重違規指標，視為違規")
+                    # 只根據違規類型數量來決定
+                    if len(violation_categories) >= 3:
+                        print(f"[審核系統] 評估失敗但檢測到多種違規類型，視為違規")
                         review_result = {
                             "is_violation": True,
-                            "reason": f"評估過程出錯，但內容觸發了多種違規類型({', '.join(violation_categories[:3])})或包含嚴重違規詞彙，系統判定為違規。",
+                            "reason": f"評估過程出錯，但內容觸發了多種違規類型({', '.join(violation_categories[:3])})，系統判定為違規。",
                             "original_response": f"ERROR: {str(review_error)}"
                         }
                     # 在其他情況下，繼續常規審核流程，無review_result
+            
+            # Skip review for URL safety issues - unsafe URLs are always violations
+            if url_check_result and url_check_result.get('is_unsafe'):
+                if not review_result:
+                    review_result = {
+                        "is_violation": True,
+                        "reason": f"訊息包含不安全的連結，這些連結可能含有詐騙、釣魚或惡意軟體內容。",
+                        "original_response": "URL_SAFETY_CHECK: Unsafe URLs detected"
+                    }
+                elif not review_result.get("is_violation"):
+                    # Override non-violation review result for unsafe URLs
+                    review_result["is_violation"] = True
+                    review_result["reason"] = f"訊息包含不安全的連結，這些連結可能含有詐騙、釣魚或惡意軟體內容。原始審核結果: {review_result['reason']}"
+                    review_result["original_response"] = "URL_SAFETY_CHECK: Unsafe URLs detected"
             
             # Delete the message (only happens if the review agent confirms it's a violation or review is disabled)
             try:
@@ -1151,9 +1297,16 @@ async def moderate_message(message, is_edit=False):
             # IMPORTANT: Apply muting only if content is confirmed as violation
             mute_success = False
             mute_reason = ""
+            mute_embed = None
             if mute_manager and (review_result is None or review_result["is_violation"]):
                 try:
-                    mute_success, mute_reason = await mute_manager.mute_user(
+                    # Add URL safety results if applicable
+                    if url_check_result and url_check_result.get('is_unsafe'):
+                        # Update the moderation results to include URL safety results
+                        if "url_safety" not in results:
+                            results["url_safety"] = url_check_result
+                    
+                    mute_success, mute_reason, mute_embed = await mute_manager.mute_user(
                         user=author,
                         violation_categories=violation_categories,
                         content=text,
@@ -1163,55 +1316,54 @@ async def moderate_message(message, is_edit=False):
                 except Exception as mute_error:
                     print(f"[審核系統] 禁言用戶 {author.name} 時出錯: {str(mute_error)}")
             
-            # Create channel notification (simple version)
+            # Create both embeds then send them simultaneously
             try:
-                # Send a notification message in the channel
+                # Channel notification embed
                 notification_embed = discord.Embed(
                     title="⚠️ 內容審核通知",
                     description=f"<@{author.id}> 您的訊息已被系統移除，因為它含有違反社群規範的內容。",
                     color=discord.Color.red()
                 )
                 
-                # Add review result if available
-                if review_result and review_result["is_violation"]:
-                    notification_embed.add_field(
-                        name="審核結果",
-                        value=review_result["reason"][:1000],  # 限制長度避免超過 Discord 限制
-                        inline=False
-                    )
-                
-                channel_notification = await channel.send(
-                    embed=notification_embed
-                )
-                
-                # Delete the notification after a short delay
-                await asyncio.sleep(CONTENT_MODERATION_NOTIFICATION_TIMEOUT)
-                await channel_notification.delete()
-            except Exception as e:
-                print(f"Failed to send channel notification: {str(e)}")
-            
-            # Send direct message with detailed information and a nice UI
-            try:
-                # Create a visually appealing embed for the DM
+                # DM embed
                 dm_embed = discord.Embed(
                     title="🛡️ 內容審核通知",
-                    description=f"您在 **{guild.name}** {action_type}的訊息因含有不適當內容而被移除。",
+                    description=f"您在 **{guild.name}** 發送的訊息因含有不適當內容而被移除。",
                     color=discord.Color.from_rgb(230, 126, 34)  # Warm orange color
                 )
-                
-                # Add review result if available
-                if review_result and review_result["is_violation"]:
-                    dm_embed.add_field(
-                        name="審核結果",
-                        value=review_result["reason"][:1000],  # 限制長度避免超過 Discord 限制
-                        inline=False
-                    )
                 
                 # Add server icon if available
                 if guild.icon:
                     dm_embed.set_thumbnail(url=guild.icon.url)
                 
                 dm_embed.timestamp = datetime.now(timezone.utc)
+                
+                # Add URL safety information if applicable
+                if url_check_result and url_check_result.get('is_unsafe'):
+                    unsafe_urls = url_check_result.get('unsafe_urls', [])
+                    if unsafe_urls:
+                        url_list = "\n".join([f"- {url}" for url in unsafe_urls[:5]])  # Limit to 5 URLs
+                        if len(unsafe_urls) > 5:
+                            url_list += f"\n- ...以及 {len(unsafe_urls) - 5} 個其他不安全連結"
+                            
+                        threat_types_map = {
+                            'PHISHING': '釣魚網站',
+                            'MALWARE': '惡意軟體',
+                            'SCAM': '詐騙網站',
+                            'SUSPICIOUS': '可疑網站'
+                        }
+                        
+                        threat_descriptions = []
+                        for threat in url_check_result.get('threat_types', []):
+                            threat_descriptions.append(threat_types_map.get(threat, threat))
+                            
+                        threat_text = "、".join(threat_descriptions) if threat_descriptions else "不安全連結"
+                        
+                        dm_embed.add_field(
+                            name="⚠️ 不安全連結",
+                            value=f"您的訊息包含可能是{threat_text}的連結：\n{url_list}",
+                            inline=False
+                        )
                 
                 # Add violation types with emoji indicators and Chinese translations
                 if violation_categories:
@@ -1241,6 +1393,12 @@ async def moderate_message(message, is_edit=False):
                         "sexual/minors": "🚫 未成年相關性內容",
                         "violence/graphic": "🩸 圖像化暴力內容",
                         "illicit/violent": "💣 暴力不法行為",
+                        
+                        # URL safety categories
+                        "phishing": "🎣 釣魚網站",
+                        "malware": "🦠 惡意軟體",
+                        "scam": "💸 詐騙內容",
+                        "suspicious": "❓ 可疑內容",
                     }
                     
                     violation_list = []
@@ -1301,14 +1459,6 @@ async def moderate_message(message, is_edit=False):
                     inline=False
                 )
                 
-                # Add mute information if muted
-                if mute_success:
-                    dm_embed.add_field(
-                        name="🔇 禁言處置",
-                        value=mute_reason,
-                        inline=False
-                    )
-                
                 # Add note and resources
                 dm_embed.add_field(
                     name="📋 請注意",
@@ -1323,25 +1473,73 @@ async def moderate_message(message, is_edit=False):
                     inline=False
                 )
                 
-                # Send the DM
-                await author.send(embed=dm_embed)
+                # Send both messages simultaneously
+                tasks = []
+                tasks.append(channel.send(embed=notification_embed))
+                tasks.append(author.send(embed=dm_embed))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Log any DM errors
+                if len(results) > 1 and isinstance(results[1], Exception):
+                    print(f"Failed to send DM: {str(results[1])}")
+                
+                # Send mute notification after content moderation notification
+                if mute_success and mute_embed:
+                    try:
+                        await author.send(embed=mute_embed)
+                    except Exception as e:
+                        print(f"Failed to send mute notification DM: {str(e)}")
+
+                # Extract channel notification for deletion
+                if len(results) > 0 and isinstance(results[0], discord.Message):
+                    channel_notification = results[0]
+                    # Delete the notification after a short delay
+                    await asyncio.sleep(CONTENT_MODERATION_NOTIFICATION_TIMEOUT)
+                    await channel_notification.delete()
+                
             except Exception as e:
-                print(f"Failed to send DM: {str(e)}")
+                print(f"Failed to send notification messages: {str(e)}")
     except Exception as e:
         print(f"Error in content moderation: {str(e)}")
         # Log the error but don't raise, to avoid interrupting normal bot operation
 
 def main():
     """Main function to run the Discord bot"""
-    # Setup logging
+    # Setup logging with UTF-8 encoding for file handler
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler("discord_bot.log"),
-            logging.StreamHandler()
+            logging.FileHandler("discord_bot.log", encoding='utf-8'),
+            # Use StreamHandler with encoding or set sys.stdout encoding
         ]
     )
+    
+    # Configure console handler separately with error handling for encoding issues
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # Add a filter to handle encoding errors for console output
+    class EncodingFilter(logging.Filter):
+        def filter(self, record):
+            try:
+                # Try to format the record, catching encoding errors
+                record.getMessage()
+                return True
+            except UnicodeEncodeError:
+                # If there's an encoding error, replace problematic characters
+                record.msg = record.msg.encode('cp1252', errors='replace').decode('cp1252')
+                record.args = tuple(
+                    arg.encode('cp1252', errors='replace').decode('cp1252') 
+                    if isinstance(arg, str) else arg 
+                    for arg in record.args
+                )
+                return True
+    
+    console_handler.addFilter(EncodingFilter())
+    logging.getLogger().addHandler(console_handler)
     
     # Ensure database directories exist
     os.makedirs(os.path.join(DB_ROOT, 'questions'), exist_ok=True)

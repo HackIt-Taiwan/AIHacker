@@ -112,6 +112,34 @@ CONTENT_MODERATION_BYPASS_ROLES = [int(id.strip()) for id in os.getenv('CONTENT_
 MUTE_ROLE_NAME = os.getenv('MUTE_ROLE_NAME', 'Muted')  # Name of the role to use for muting users
 MUTE_ROLE_ID = int(os.getenv('MUTE_ROLE_ID', '0'))  # ID of the role to use for muting users
 
+# URL Safety Check Configuration
+URL_SAFETY_CHECK_ENABLED = os.getenv('URL_SAFETY_CHECK_ENABLED', 'False').lower() == 'true'
+URL_SAFETY_CHECK_API = os.getenv('URL_SAFETY_CHECK_API', 'virustotal')  # virustotal or googlesafe
+URL_SAFETY_API_KEY = os.getenv('URL_SAFETY_API_KEY', '')
+URL_SAFETY_THRESHOLD = float(os.getenv('URL_SAFETY_THRESHOLD', '0.3'))  # 30% score threshold for unsafe
+
+# URL safety check retry settings
+URL_SAFETY_MAX_RETRIES = int(os.getenv('URL_SAFETY_MAX_RETRIES', '3'))
+URL_SAFETY_RETRY_DELAY = int(os.getenv('URL_SAFETY_RETRY_DELAY', '2'))  # Base delay in seconds (will use exponential backoff)
+URL_SAFETY_REQUEST_TIMEOUT = float(os.getenv('URL_SAFETY_REQUEST_TIMEOUT', '5.0'))  # Timeout in seconds
+
+# Known impersonation and phishing domains to explicitly block
+URL_SAFETY_IMPERSONATION_DOMAINS = [
+    domain.strip() for domain in os.getenv(
+        'URL_SAFETY_IMPERSONATION_DOMAINS', 
+        'steamcommunuttly,steamcommunity-login,discord-gift,discordnitro,'
+        'roblox-free,free-minecraft,nintendo-games,playstation-gift'
+    ).split(',') if domain.strip()
+]
+
+# Map of threat types to severity levels (0-10)
+URL_SAFETY_SEVERITY_LEVELS = {
+    'PHISHING': 9,
+    'MALWARE': 10, 
+    'SCAM': 8,
+    'SUSPICIOUS': 5
+}
+
 # Moderation Review Configuration
 MODERATION_REVIEW_ENABLED = os.getenv('MODERATION_REVIEW_ENABLED', 'True').lower() == 'true'  # Whether to use moderation review
 MODERATION_REVIEW_AI_SERVICE = os.getenv('MODERATION_REVIEW_AI_SERVICE', PRIMARY_AI_SERVICE)  # AI service to use for review

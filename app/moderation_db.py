@@ -289,7 +289,7 @@ class ModerationDB:
             violation_count: Number of violations
             
         Returns:
-            A timedelta for the mute duration, or None for permanent mute
+            A timedelta for the mute duration
         """
         if violation_count == 1:
             return timedelta(minutes=5)
@@ -298,9 +298,9 @@ class ModerationDB:
         elif violation_count == 3:
             return timedelta(days=7)
         elif violation_count == 4:
-            return timedelta(days=30)
+            return timedelta(days=7)
         else:  # 5+ violations
-            return timedelta(days=365)  # 1 year
+            return timedelta(days=28)  # 28 days (maximum Discord timeout)
     
     def close(self):
         """Close the database connection."""

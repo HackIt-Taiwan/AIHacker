@@ -1,5 +1,5 @@
 """
-Module for managing user mutes through Discord roles.
+Module for managing user mutes through Discord roles and timeouts.
 """
 
 import discord
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class MuteManager:
     """
-    Manager for handling user mutes through Discord roles.
+    Manager for handling user mutes through Discord roles and timeouts.
     """
     
     def __init__(self, bot, mute_role_name: str = "Muted"):
@@ -87,10 +87,45 @@ class MuteManager:
         self.guild_mute_roles[guild.id] = role
         return role
     
-    async def mute_user(self, user: discord.Member, violation_categories: List[str], 
-                       content: Optional[str] = None, details: Optional[Dict] = None) -> Tuple[bool, str]:
+    async def timeout_user(self, user: discord.Member, duration: Optional[timedelta] = None, 
+                          reason: Optional[str] = None) -> Tuple[bool, str]:
         """
-        Mute a user based on violation.
+        Apply timeout to a user using Discord's built-in timeout feature.
+        
+        Args:
+            user: Discord user to timeout
+            duration: Duration of the timeout
+            reason: Reason for the timeout
+            
+        Returns:
+            Tuple containing success status and message
+        """
+        try:
+            # Set the timeout
+            timeout_until = discord.utils.utcnow() + duration
+            await user.timeout(timeout_until, reason=reason)
+            
+            # Format a user-friendly message
+            if duration.total_seconds() < 3600:
+                duration_str = f"{int(duration.total_seconds() / 60)} 分鐘"
+            elif duration.total_seconds() < 86400:
+                duration_str = f"{int(duration.total_seconds() / 3600)} 小時"
+            else:
+                duration_str = f"{int(duration.total_seconds() / 86400)} 天"
+            return True, f"使用者已被禁言 {duration_str}"
+                
+        except discord.Forbidden:
+            return False, "機器人沒有足夠的權限來設置超時"
+        except discord.HTTPException as e:
+            return False, f"設置超時時發生錯誤: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error timing out user {user.name}: {str(e)}")
+            return False, f"無法禁言使用者: {str(e)}"
+    
+    async def mute_user(self, user: discord.Member, violation_categories: List[str], 
+                       content: Optional[str] = None, details: Optional[Dict] = None) -> Tuple[bool, str, Optional[discord.Embed]]:
+        """
+        Mute a user based on violation using Discord's timeout feature.
         
         Args:
             user: Discord user to mute
@@ -99,7 +134,7 @@ class MuteManager:
             details: Additional details about the violation
             
         Returns:
-            Tuple containing success status and message
+            Tuple containing success status, message, and mute notification embed (if successful)
         """
         try:
             guild = user.guild
@@ -119,42 +154,52 @@ class MuteManager:
             # Calculate mute duration based on violation count
             duration = self.db.calculate_mute_duration(violation_count)
             
-            # Format a human-readable duration string
-            if duration:
-                if duration.total_seconds() < 3600:
-                    duration_str = f"{int(duration.total_seconds() / 60)} 分鐘"
-                elif duration.total_seconds() < 86400:
-                    duration_str = f"{int(duration.total_seconds() / 3600)} 小時"
-                else:
-                    duration_str = f"{int(duration.total_seconds() / 86400)} 天"
-            else:
-                duration_str = "永久"
+            # Format reason
+            from app.community_guidelines import format_mute_reason
+            reason = format_mute_reason(violation_count, violation_categories)
             
-            # Get or create mute role
-            mute_role = await self.get_mute_role(guild)
-            if not mute_role:
-                return False, "無法創建或獲取禁言角色"
+            # Apply timeout using Discord's built-in timeout feature
+            success, message = await self.timeout_user(user, duration, reason=f"內容審核 - 第 {violation_count} 次違規")
             
-            # Add role to user
-            await user.add_roles(mute_role, reason=f"內容審核 - 第 {violation_count} 次違規")
-            
-            # Add mute record to database
-            self.db.add_mute(user.id, guild.id, violation_count, duration)
-            
-            # If temporary mute, schedule unmute task
-            if duration:
-                # Schedule unmute task
-                self.bot.loop.create_task(
-                    self._schedule_unmute(user, mute_role, duration)
+            # Create mute notification embed but don't send it right away
+            mute_embed = None
+            if success:
+                # Add mute record to database
+                self.db.add_mute(user.id, guild.id, violation_count, duration)
+                
+                # Create embed for notification
+                mute_embed = discord.Embed(
+                    title="禁言通知",
+                    description=f"您在 **{guild.name}** 已被暫時禁言。",
+                    color=discord.Color.red()
+                )
+                
+                # Add duration if available
+                if duration:
+                    if duration.total_seconds() < 3600:
+                        duration_str = f"{int(duration.total_seconds() / 60)} 分鐘"
+                    elif duration.total_seconds() < 86400:
+                        duration_str = f"{int(duration.total_seconds() / 3600)} 小時"
+                    else:
+                        duration_str = f"{int(duration.total_seconds() / 86400)} 天"
+                    
+                    mute_embed.add_field(
+                        name="禁言時間",
+                        value=duration_str,
+                        inline=True
+                    )
+                
+                mute_embed.add_field(
+                    name="原因",
+                    value=reason,
+                    inline=False
                 )
             
-            # Create success message
-            from app.community_guidelines import format_mute_reason
-            return True, format_mute_reason(violation_count, violation_categories)
+            return success, reason, mute_embed
         
         except Exception as e:
             logger.error(f"Error muting user {user.name}: {str(e)}")
-            return False, f"無法禁言使用者：{str(e)}"
+            return False, f"無法禁言使用者：{str(e)}", None
     
     async def _schedule_unmute(self, user: discord.Member, mute_role: discord.Role, duration: timedelta):
         """
@@ -198,6 +243,9 @@ class MuteManager:
         """
         Check for expired mutes and unmute users.
         Should be called periodically.
+        
+        Note: This is not needed for Discord timeouts as they are automatically removed,
+        but kept for legacy role-based mutes in the database.
         """
         try:
             # Get expired mutes
@@ -222,7 +270,7 @@ class MuteManager:
                 if not mute_role:
                     continue
                 
-                # Remove role if user has it
+                # Remove the mute role
                 if mute_role in user.roles:
                     await user.remove_roles(mute_role, reason="禁言期限已到")
                     
@@ -243,10 +291,90 @@ class MuteManager:
                         await user.send(embed=embed)
                     except Exception as e:
                         logger.error(f"Failed to send unmute DM to {user.name}: {str(e)}")
-        
+            
+            # We no longer reapply timeouts after 28 days as per new requirements
+            # 28 day timeouts will naturally expire
+            # await self.reapply_permanent_timeouts()
+                    
         except Exception as e:
             logger.error(f"Error checking expired mutes: {str(e)}")
     
+    # This method is no longer used as we don't want to automatically reapply timeouts
+    # keeping the code commented for reference
+    """
+    async def reapply_permanent_timeouts(self):
+        # Reapply timeouts for users with permanent bans that are about to expire.
+        # Discord only allows timeouts up to 28 days, so we need to reapply them periodically.
+        try:
+            # Get all active mutes with no end time (permanent bans)
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # Find permanent bans where the last application was more than 20 days ago
+            twenty_days_ago = (datetime.utcnow() - timedelta(days=20)).isoformat()
+            
+            cursor.execute('''
+            SELECT user_id, guild_id, id
+            FROM mutes 
+            WHERE active = TRUE AND end_time IS NULL AND start_time < ?
+            ''', (twenty_days_ago,))
+            
+            permanent_mutes = [dict(row) for row in cursor.fetchall()]
+            
+            for mute in permanent_mutes:
+                user_id = mute['user_id']
+                guild_id = mute['guild_id']
+                mute_id = mute['id']
+                
+                # Get guild
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
+                
+                # Get user
+                user = guild.get_member(user_id)
+                if not user:
+                    continue
+                
+                # Check if the user is currently timed out
+                if user.timed_out:
+                    # Calculate remaining timeout time
+                    if user.timeout and user.timeout > discord.utils.utcnow():
+                        remaining_seconds = (user.timeout - discord.utils.utcnow()).total_seconds()
+                        
+                        # If more than 7 days remaining, skip reapplication
+                        if remaining_seconds > 7 * 24 * 3600:
+                            continue
+                
+                # Reapply the permanent timeout
+                logger.info(f"Reapplying permanent timeout for user {user.name} in guild {guild.name}")
+                
+                # Get violation count and categories for the reason
+                violation_count = self.db.get_violation_count(user_id, guild_id)
+                
+                # Set a new 28-day timeout
+                timeout_until = discord.utils.utcnow() + timedelta(days=28)
+                try:
+                    await user.timeout(timeout_until, reason=f"重新應用永久禁言 - 第 {violation_count} 次違規")
+                    
+                    # Update the mute record's start time
+                    cursor.execute('''
+                    UPDATE mutes
+                    SET start_time = ?
+                    WHERE id = ?
+                    ''', (datetime.utcnow().isoformat(), mute_id))
+                    
+                    conn.commit()
+                    
+                    logger.info(f"Successfully reapplied permanent timeout for user {user.name}")
+                except Exception as e:
+                    logger.error(f"Failed to reapply timeout for {user.name}: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Error reapplying permanent timeouts: {str(e)}")
+    """
+    
     def close(self):
         """Close the database connection."""
-        self.db.close()
+        if self.db:
+            self.db.close()
