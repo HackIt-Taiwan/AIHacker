@@ -4,11 +4,18 @@ import asyncio
 from collections import defaultdict
 import time
 import random
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional, Any, Set
 from datetime import datetime, timedelta, timezone
 import re
 import os
 import logging
+import string
+import traceback
+import json
+import aiohttp
+import sys
+import io
+from dotenv import load_dotenv
 
 from app.config import (
     DISCORD_TOKEN, PRIMARY_AI_SERVICE, PRIMARY_MODEL,
@@ -65,6 +72,12 @@ invite_manager = None
 notion_faq = None
 mute_manager = None  # Added for mute management
 question_manager = None  # Add this line to fix the error
+
+# Dictionary to track users who have been recently punished
+# Keys are user IDs, values are expiration timestamps
+tracked_violators = {}
+# Time window in seconds during which we won't re-punish a user (5 minutes)
+VIOLATION_TRACKING_WINDOW = 300
 
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
@@ -1294,6 +1307,27 @@ async def moderate_message(message, is_edit=False):
                 print(f"[審核系統] 刪除消息失敗: {str(e)}")
                 return
             
+            # Check if user was recently punished - if so, just delete the message without additional notification
+            current_time = time.time()
+            user_id = author.id
+            is_recent_violator = False
+            
+            if user_id in tracked_violators:
+                expiry_time = tracked_violators[user_id]
+                if current_time < expiry_time:
+                    is_recent_violator = True
+                    print(f"[審核系統] 用戶 {author.name} 最近已被處罰，僅刪除消息而不重複處罰")
+                else:
+                    # Expired tracking, remove from dictionary
+                    del tracked_violators[user_id]
+            
+            # If this is a recent violator, just return after deleting the message
+            if is_recent_violator:
+                return
+                
+            # Track this user as a recent violator
+            tracked_violators[user_id] = current_time + VIOLATION_TRACKING_WINDOW
+            
             # IMPORTANT: Apply muting only if content is confirmed as violation
             mute_success = False
             mute_reason = ""
@@ -1315,6 +1349,13 @@ async def moderate_message(message, is_edit=False):
                     print(f"[審核系統] 用戶 {author.name} 禁言狀態: {mute_success}")
                 except Exception as mute_error:
                     print(f"[審核系統] 禁言用戶 {author.name} 時出錯: {str(mute_error)}")
+            
+            # Clean up old entries in tracked_violators
+            if len(tracked_violators) > 1000:  # Just to prevent unbounded growth
+                current_time = time.time()
+                expired_keys = [k for k, v in tracked_violators.items() if v < current_time]
+                for k in expired_keys:
+                    del tracked_violators[k]
             
             # Create both embeds then send them simultaneously
             try:
@@ -1462,7 +1503,7 @@ async def moderate_message(message, is_edit=False):
                 # Add note and resources
                 dm_embed.add_field(
                     name="📋 請注意",
-                    value="請確保您發送的內容符合社群規範。重複違規可能導致更嚴重的處罰。\n\n如果您對此決定有疑問，請聯繫伺服器管理員。",
+                    value="請確保您發送的內容符合社群規範。重複違規可能導致更嚴重的處罰。\n\n如果您對此決定有疑問，請聯繫伺服器工作人員。",
                     inline=False
                 )
                 

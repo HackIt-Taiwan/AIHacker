@@ -44,7 +44,7 @@ class InviteManager:
             return False
 
     def delete_invite(self, invite_code: str, user_id: int, guild_invites: List[Dict]) -> bool:
-        """刪除邀請記錄（只能由創建者或管理員刪除）"""
+        """刪除邀請記錄（只能由創建者或工作人員刪除）"""
         try:
             # 檢查 Discord 邀請是否存在
             invite_exists = any(inv['code'] == invite_code for inv in guild_invites)

@@ -131,7 +131,7 @@ class ModerationCommands(commands.Cog):
             if reason:
                 embed.add_field(name="原因", value=reason, inline=False)
             
-            embed.set_footer(text=f"管理員: {interaction.user.name}")
+            embed.set_footer(text=f"工作人員: {interaction.user.name}")
             
             # Respond to the interaction
             await interaction.response.send_message(embed=embed)
@@ -147,7 +147,7 @@ class ModerationCommands(commands.Cog):
                 if reason:
                     user_embed.add_field(name="原因", value=reason, inline=False)
                 
-                user_embed.set_footer(text=f"管理員: {interaction.user.name}")
+                user_embed.set_footer(text=f"工作人員: {interaction.user.name}")
                 
                 await user.send(embed=user_embed)
             except discord.Forbidden:
@@ -217,7 +217,7 @@ class ModerationCommands(commands.Cog):
             if reason:
                 embed.add_field(name="原因", value=reason, inline=False)
             
-            embed.set_footer(text=f"管理員: {interaction.user.name}")
+            embed.set_footer(text=f"工作人員: {interaction.user.name}")
             
             # Respond to the interaction
             await interaction.response.send_message(embed=embed)
@@ -233,7 +233,7 @@ class ModerationCommands(commands.Cog):
                 if reason:
                     user_embed.add_field(name="原因", value=reason, inline=False)
                 
-                user_embed.set_footer(text=f"管理員: {interaction.user.name}")
+                user_embed.set_footer(text=f"工作人員: {interaction.user.name}")
                 
                 await user.send(embed=user_embed)
             except discord.Forbidden:

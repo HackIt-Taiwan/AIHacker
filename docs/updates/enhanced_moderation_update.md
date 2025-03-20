@@ -72,9 +72,9 @@ MUTE_ROLE_NAME = os.getenv('MUTE_ROLE_NAME', 'Muted')
    - 第3次：禁言 7 天
    - 第4次：永久禁言
 
-### 管理員操作
+### 工作人員操作
 
-管理員可以：
+工作人員可以：
 
 1. 在 Discord 伺服器設定中調整 "Muted" 角色的權限
 2. 手動移除使用者的 "Muted" 角色以解除禁言

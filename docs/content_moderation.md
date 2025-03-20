@@ -85,7 +85,7 @@ CONTENT_MODERATION_BYPASS_ROLES=1234567890,9876543210  # 可繞過審核的角�
 請注意
 請確保您發送的內容符合社群規範。重複違規可能導致更嚴重的處罰。
 
-如果您對此決定有疑問，請聯繫伺服器管理員。
+如果您對此決定有疑問，請聯繫伺服器工作人員。
 ```
 
 ## 支援的違規類別
@@ -123,6 +123,7 @@ OpenAI 的 moderation API 能夠檢測以下類型的違規內容：
 
 ## 最近更新
 
+- **2024年6月28日**：新增違規追蹤系統，避免短時間內重複處罰同一使用者
 - **2024年6月27日**：進一步簡化審核通知內容，移除審核結果和禁言處置欄位
 - **2024年6月26日**：優化通知順序，內容審核通知和禁言通知分開發送
 - **2024年6月25日**：簡化審核通知格式，提供更簡短清晰的違規理由
@@ -130,4 +131,4 @@ OpenAI 的 moderation API 能夠檢測以下類型的違規內容：
 - **2024年6月14日**：放寬審核標準，增加更多台灣口語表達支援
 - **2024年6月13日**：添加文化感知審核系統，特別支援台灣口語表達
 - 2024年6月12日：改進通知系統，頻道通知和私信同時發送，審核結果僅在私信中顯示
-- 詳細更新說明請查看 [updates/direct_ai_judgment.md](./updates/direct_ai_judgment.md)、[updates/relaxed_moderation_policy.md](./updates/relaxed_moderation_policy.md)、[updates/culture_aware_moderation.md](./updates/culture_aware_moderation.md)、[updates/notification_sequence_update.md](./updates/notification_sequence_update.md)、[updates/simplified_notification_content.md](./updates/simplified_notification_content.md) 和 [updates/moderation_update.md](./updates/moderation_update.md) 
+- 詳細更新說明請查看 [updates/direct_ai_judgment.md](./updates/direct_ai_judgment.md)、[updates/relaxed_moderation_policy.md](./updates/relaxed_moderation_policy.md)、[updates/culture_aware_moderation.md](./updates/culture_aware_moderation.md)、[updates/notification_sequence_update.md](./updates/notification_sequence_update.md)、[updates/simplified_notification_content.md](./updates/simplified_notification_content.md)、[updates/violation_tracking.md](./updates/violation_tracking.md) 和 [updates/moderation_update.md](./updates/moderation_update.md) 

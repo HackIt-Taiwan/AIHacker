@@ -97,7 +97,7 @@ CONTENT_MODERATION_BYPASS_ROLES=1314456999936917535  # 可繞過審核的角色 
 
 ## 注意事項
 
-1. 管理員可以通過 `CONTENT_MODERATION_BYPASS_ROLES` 配置項指定可繞過審核的角色
+1. 工作人員可以通過 `CONTENT_MODERATION_BYPASS_ROLES` 配置項指定可繞過審核的角色
 2. 審核功能可以通過設置 `CONTENT_MODERATION_ENABLED=False` 完全禁用
 3. 只有公開消息會被審核，私信消息不會被處理
 4. 新發送和編輯的消息都將得到審核

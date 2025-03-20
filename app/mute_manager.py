@@ -229,7 +229,7 @@ class MuteManager:
                     
                     embed.add_field(
                         name="請注意",
-                        value="請遵守社群規範，避免再次違規。如有任何問題，請聯繫管理員。",
+                        value="請遵守社群規範，避免再次違規。如有任何問題，請聯繫工作人員。",
                         inline=False
                     )
                     
@@ -284,7 +284,7 @@ class MuteManager:
                         
                         embed.add_field(
                             name="請注意",
-                            value="請遵守社群規範，避免再次違規。如有任何問題，請聯繫管理員。",
+                            value="請遵守社群規範，避免再次違規。如有任何問題，請聯繫工作人員。",
                             inline=False
                         )
                         

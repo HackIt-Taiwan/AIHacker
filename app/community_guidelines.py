@@ -117,11 +117,11 @@ def get_full_guidelines() -> str:
 4. **第四次違規**：暫時禁言 7 天
 5. **第五次違規或以上**：暫時禁言 28 天
 
-管理員和版主有權根據具體情況執行這些措施，以維護社群安全和健康的交流環境。
+工作人員和版主有權根據具體情況執行這些措施，以維護社群安全和健康的交流環境。
 
 詳細規範請查看 `docs/community_guidelines_comprehensive.md`。
 
-我們感謝所有成員對維護積極社群環境的貢獻。如有任何問題或疑慮，請聯繫管理員或版主。
+我們感謝所有成員對維護積極社群環境的貢獻。如有任何問題或疑慮，請聯繫工作人員或版主。
 """
     
     return full_guidelines
@@ -176,6 +176,6 @@ def format_mute_reason(violation_count: int, violation_categories: List[str]) ->
         reason = f"第五次違規：28天禁言\n違規原因：\n{guidelines_text}"
     
     # 添加簡短的申訴提示
-    reason += "\n\n如需申訴請聯繫管理員。"
+    reason += "\n\n如需申訴請聯繫工作人員。"
     
     return reason 

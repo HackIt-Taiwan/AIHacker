@@ -38,7 +38,7 @@
 
 ### 社區互動
 - 自定義邀請：創建和管理邀請連結
-- Crazy Talk 指令：管理員可使用特殊風格回答問題
+- Crazy Talk 指令：工作人員可使用特殊風格回答問題
 
 ## 安裝與設置
 
@@ -62,9 +62,9 @@ python main.py
 - `!help` - 顯示幫助信息
 - `!remind` - 設置提醒
 - `!leave` - 請假管理
-- `!crazy` - Crazy Talk 風格回答（僅限管理員）
+- `!crazy` - Crazy Talk 風格回答（僅限工作人員）
 
-### 管理員指令
+### 工作人員指令
 - `/create_invite` - 創建永久邀請連結
 - `/list_invites` - 查看邀請連結統計
 - `/delete_invite` - 刪除邀請連結
@@ -85,6 +85,8 @@ python main.py
 - [審核標準放寬](docs/updates/relaxed_moderation_policy.md)
 - [通知順序優化](docs/updates/notification_sequence_update.md)
 - [通知內容簡化](docs/updates/simplified_notification_content.md)
+- [違規追蹤優化](docs/updates/violation_tracking.md)
+- [API 參考文檔](docs/api.md)
 
 ### 貢獻
 歡迎提交 Issues 和 Pull Requests。請確保您的代碼符合項目的風格指南和質量標準。
