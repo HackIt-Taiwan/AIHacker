@@ -6,3 +6,5 @@
 *.db
 
 *.log
+
+data/url_blacklist.json

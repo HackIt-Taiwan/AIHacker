@@ -2,6 +2,19 @@
 
 ## 最近更新
 
+### URL安全檢查系統增強：短網址黑名單映射 (2024-03-26)
+- 更新URL黑名單系統，現在同時記錄原始短網址和展開後的目標URL
+- 大幅提高對已知短網址的處理效率，無需展開即可識別危險短網址
+- 為所有處理過的短網址建立映射關係，加速後續檢查
+- 更詳細資訊請查看 [URL黑名單功能增強文檔](docs/updates/shortened_url_blacklist_update.md)
+
+### URL安全檢查系統新增URL黑名單功能 (2024-03-26)
+- 新增URL黑名單系統，自動記錄已檢測到的危險URL
+- 提高安全檢查效率，已知威脅無需再重複API檢查
+- 支援網域黑名單，可自動封鎖嚴重威脅的整個網域
+- 使用持久化JSON存儲，確保重啟後黑名單仍然有效
+- 更詳細資訊請查看 [URL黑名單功能文檔](docs/url_blacklist.md)
+
 ### URL安全檢查系統新增URL展開功能 (2024-03-26)
 - 新增URL短網址展開功能，以提高安全檢查的有效性
 - 使用多種方法展開短網址，包括HTTP請求和Selenium無頭瀏覽器
@@ -93,6 +106,7 @@
 - 內容審核：自動檢測並處理不適當的內容
 - URL 安全檢查：檢測並攔截不安全的網址，包括高效短網址追蹤和多重重定向檢查
 - URL 短網址展開：自動展開短網址以顯示真實目標，防止釣魚和惡意連結
+- URL 黑名單系統：自動記錄並快速識別已知的危險URL，減少API調用並提升響應速度
 - 使用者超時：使用 Discord 內建超時功能禁言使用者
 - 違規處理：根據違規程度自動管理用戶禁言時間
 
@@ -151,6 +165,12 @@ python main.py
 - [通知內容簡化](docs/updates/simplified_notification_content.md)
 - [違規追蹤優化](docs/updates/violation_tracking.md)
 - [API 參考文檔](docs/api.md)
+- [內容審核](docs/content_moderation.md)
+- [社群規範](docs/community_guidelines.md)
+- [URL展開功能](docs/url_unshortening.md)
+- [URL黑名單系統](docs/url_blacklist.md)
+- [短網址黑名單增強](docs/updates/shortened_url_blacklist_update.md)
+- [文化感知審核](docs/updates/culture_aware_moderation.md)
 
 ### 貢獻
 歡迎提交 Issues 和 Pull Requests。請確保您的代碼符合項目的風格指南和質量標準。
@@ -166,6 +186,7 @@ python main.py
 - 自動同步斜線命令（Slash Commands）
 - 增強的內容審核系統（含分級禁言）
 - URL 安全檢查（檢測釣魚、詐騙和惡意連結）
+- URL 短網址展開與黑名單系統（高效識別已知危險短網址）
 
 ## 環境要求
 
@@ -262,7 +283,8 @@ HackIt Discord Bot 支援使用 OpenAI 的 omni-moderation-latest 模型進行�
 - 向使用者發送通知（頻道臨時消息和私信）
 - 分級禁言機制（5分鐘/12小時/7天/7天/28天）
 - 支援角色豁免機制
-- URL 安全檢查（檢測釣魚、詐騙和惡意連結，包括短網址和重定向）
+- URL 安全檢查（檢測釣魚、詐騙和惡意連結）
+- URL 短網址展開與黑名單系統（即時識別已知危險連結，無需重複檢查）
 - 完全依賴 AI 判斷，無預設白名單或黑名單
 
 [查看詳細文檔](docs/content_moderation.md)

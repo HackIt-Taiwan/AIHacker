@@ -21,9 +21,13 @@ from app.config import (
     URL_SAFETY_RETRY_DELAY,
     URL_SAFETY_REQUEST_TIMEOUT,
     URL_SAFETY_MAX_URLS,
-    URL_UNSHORTEN_ENABLED
+    URL_UNSHORTEN_ENABLED,
+    URL_BLACKLIST_ENABLED,
+    URL_BLACKLIST_FILE,
+    URL_BLACKLIST_AUTO_DOMAIN
 )
 from app.ai.service.url_unshortener import URLUnshortener
+from app.ai.service.url_blacklist import URLBlacklist
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,13 @@ class URLSafetyChecker:
         # Initialize URL unshortener
         self.unshortener = URLUnshortener()
         
+        # Initialize URL blacklist if enabled
+        self.blacklist_enabled = URL_BLACKLIST_ENABLED
+        if self.blacklist_enabled:
+            self.blacklist = URLBlacklist(URL_BLACKLIST_FILE)
+        else:
+            self.blacklist = None
+        
     async def __aenter__(self):
         """Async context manager entry."""
         return self
@@ -59,6 +70,9 @@ class URLSafetyChecker:
         """Async context manager exit with cleanup."""
         if hasattr(self, 'unshortener'):
             self.unshortener.close()
+            
+        if hasattr(self, 'blacklist') and self.blacklist:
+            self.blacklist.close()
             
     async def extract_urls(self, text: str) -> List[str]:
         """
@@ -99,20 +113,54 @@ class URLSafetyChecker:
             
         results = {}
         is_unsafe = False
+        blacklisted_urls = []
+        urls_to_check = []
         
+        # First, check against the blacklist if enabled
+        if self.blacklist_enabled and self.blacklist:
+            for url in urls:
+                blacklist_result = self.blacklist.is_blacklisted(url)
+                if blacklist_result:
+                    # URL is in the blacklist
+                    is_unsafe = True
+                    blacklisted_urls.append(url)
+                    
+                    # Create a result based on the blacklist entry
+                    results[url] = {
+                        "url": url,
+                        "is_unsafe": True,
+                        "check_time": datetime.now().isoformat(),
+                        "message": f"URL matches blacklisted entry: {blacklist_result.get('reason', 'Unknown threat')}",
+                        "threat_types": blacklist_result.get('threat_types', ['BLACKLISTED']),
+                        "severity": blacklist_result.get('severity', 8),
+                        "from_blacklist": True,
+                        "blacklisted_at": blacklist_result.get('blacklisted_at')
+                    }
+                    logger.warning(f"URL {url} found in blacklist: {blacklist_result.get('reason', 'Unknown threat')}")
+                else:
+                    # URL is not in the blacklist, will need to check it
+                    urls_to_check.append(url)
+        else:
+            # Blacklist not enabled, check all URLs
+            urls_to_check = urls
+            
+        # If all URLs are blacklisted, we can return early
+        if not urls_to_check:
+            return is_unsafe, results
+            
         # If there are more than max_urls, randomly sample that many of them
-        urls_to_check = urls
         sampling_applied = False
         max_urls_to_check = URL_SAFETY_MAX_URLS
+        urls_to_actual_check = urls_to_check
         
-        if len(urls) > max_urls_to_check:
+        if len(urls_to_check) > max_urls_to_check:
             sampling_applied = True
-            urls_to_check = random.sample(urls, max_urls_to_check)
-            logger.info(f"URL check: Sampling {max_urls_to_check} from {len(urls)} URLs")
+            urls_to_actual_check = random.sample(urls_to_check, max_urls_to_check)
+            logger.info(f"URL check: Sampling {max_urls_to_check} from {len(urls_to_check)} non-blacklisted URLs")
             
             # Mark the URLs that weren't checked as skipped in the results
-            for url in urls:
-                if url not in urls_to_check:
+            for url in urls_to_check:
+                if url not in urls_to_actual_check:
                     results[url] = {
                         "url": url,
                         "is_unsafe": False,
@@ -121,30 +169,65 @@ class URLSafetyChecker:
                         "skipped": True
                     }
         
-        logger.info(f"Checking {len(urls_to_check)} URLs for safety")
+        logger.info(f"Checking {len(urls_to_actual_check)} URLs for safety")
         
         # First, unshorten all URLs if URL unshortening is enabled
         if URL_UNSHORTEN_ENABLED:
-            logger.info(f"Unshortening {len(urls_to_check)} URLs before safety check")
+            logger.info(f"Unshortening {len(urls_to_actual_check)} URLs before safety check")
             unshortened_urls = {}
-            unshortening_results = await self.unshortener.unshorten_urls(urls_to_check)
+            unshortening_results = await self.unshortener.unshorten_urls(urls_to_actual_check)
             
             # Map original URLs to their unshortened versions
-            for url in urls_to_check:
+            for url in urls_to_actual_check:
                 if url in unshortening_results:
                     result = unshortening_results[url]
                     if result["success"] and result["final_url"] != url:
                         # URL was successfully unshortened
                         unshortened_urls[url] = result["final_url"]
                         logger.info(f"Unshortened URL: {url} -> {result['final_url']}")
+                        
+                        # Add the shortened URL mapping to the blacklist for future reference
+                        # even if it's not unsafe (this improves lookup efficiency)
+                        if self.blacklist_enabled and self.blacklist:
+                            self.blacklist.add_shortened_url(url, result["final_url"])
+                        
+                        # Check if the unshortened URL is in the blacklist
+                        if self.blacklist_enabled and self.blacklist:
+                            blacklist_result = self.blacklist.is_blacklisted(result["final_url"])
+                            if blacklist_result:
+                                # Unshortened URL is in the blacklist
+                                is_unsafe = True
+                                blacklisted_urls.append(url)
+                                
+                                # Remove this URL from urls_to_actual_check as we've determined it's unsafe
+                                if url in urls_to_actual_check:
+                                    urls_to_actual_check.remove(url)
+                                
+                                # Create a result based on the blacklist entry
+                                results[url] = {
+                                    "url": url,
+                                    "unshortened_url": result["final_url"],
+                                    "is_unsafe": True,
+                                    "check_time": datetime.now().isoformat(),
+                                    "message": f"Unshortened URL matches blacklisted entry: {blacklist_result.get('reason', 'Unknown threat')}",
+                                    "threat_types": blacklist_result.get('threat_types', ['BLACKLISTED']),
+                                    "severity": blacklist_result.get('severity', 8),
+                                    "from_blacklist": True,
+                                    "blacklisted_at": blacklist_result.get('blacklisted_at')
+                                }
+                                logger.warning(f"Unshortened URL {result['final_url']} found in blacklist (original: {url}): {blacklist_result.get('reason', 'Unknown threat')}")
                     else:
                         # Use original URL if unshortening failed or didn't change URL
                         unshortened_urls[url] = url
                 else:
                     unshortened_urls[url] = url
         
-        # Check safety for the selected URLs
-        for original_url in urls_to_check:
+        # Check safety for the remaining URLs
+        for original_url in urls_to_actual_check:
+            # Skip if we already determined this URL is unsafe from the blacklist
+            if original_url in results and results[original_url].get("is_unsafe", False):
+                continue
+                
             # Use unshortened URL for safety check if available
             url_to_check = unshortened_urls.get(original_url, original_url) if URL_UNSHORTEN_ENABLED else original_url
             
@@ -158,6 +241,16 @@ class URLSafetyChecker:
                 
             # Store result under the original URL
             results[original_url] = result
+            
+            # If URL is unsafe, add it to the blacklist
+            if url_unsafe and self.blacklist_enabled and self.blacklist:
+                self.blacklist.add_unsafe_result(
+                    url_to_check, 
+                    result, 
+                    original_url=original_url,
+                    blacklist_domain=URL_BLACKLIST_AUTO_DOMAIN
+                )
+                logger.info(f"Added unsafe URL to blacklist: {url_to_check}{' (original: '+original_url+')' if original_url != url_to_check else ''}")
             
             if url_unsafe:
                 is_unsafe = True

@@ -121,6 +121,11 @@ URL_UNSHORTEN_TIMEOUT = float(os.getenv('URL_UNSHORTEN_TIMEOUT', '5.0'))  # Time
 URL_UNSHORTEN_MAX_REDIRECTS = int(os.getenv('URL_UNSHORTEN_MAX_REDIRECTS', '10'))
 URL_UNSHORTEN_RETRY_COUNT = int(os.getenv('URL_UNSHORTEN_RETRY_COUNT', '2'))
 
+# URL Blacklist Configuration
+URL_BLACKLIST_ENABLED = os.getenv('URL_BLACKLIST_ENABLED', 'True').lower() == 'true'
+URL_BLACKLIST_FILE = os.getenv('URL_BLACKLIST_FILE', os.path.join(DB_ROOT, 'url_blacklist.json'))
+URL_BLACKLIST_AUTO_DOMAIN = os.getenv('URL_BLACKLIST_AUTO_DOMAIN', 'False').lower() == 'true'  # Auto-blacklist domains for severe threats
+
 # Known impersonation and phishing domains to explicitly block
 URL_SAFETY_IMPERSONATION_DOMAINS = [
     domain.strip() for domain in os.getenv(
