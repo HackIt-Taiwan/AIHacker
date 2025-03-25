@@ -86,6 +86,9 @@ tracked_violators = {}
 # Time window in seconds during which we won't re-punish a user (5 minutes)
 VIOLATION_TRACKING_WINDOW = 300
 
+# 設置空的IGNORED_CHANNELS列表，表示不屏蔽任何頻道
+IGNORED_CHANNELS = []
+
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
     current_time = time.time()

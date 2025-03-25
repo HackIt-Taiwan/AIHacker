@@ -93,6 +93,18 @@
 - 移除黑名單檢查機制，改為完全依賴 OpenAI 的審核 API 和 LLM 審核
 - 更詳細資訊請查看 [內容審核系統更新文檔](docs/updates/moderation_system_update.md)
 
+### Bug修復：頻道處理錯誤 (2024-03-27)
+- 修復因缺少`IGNORED_CHANNELS`定義而導致的消息處理錯誤
+- 確保機器人能正常處理所有頻道的消息
+- 更詳細資訊請查看 [Bug修復記錄](docs/updates/bug_fixes.md)
+
+### URL安全檢查系統優化：即時黑名單檢查 (2024-03-27)
+- 優化URL黑名單檢查流程，消息接收時立即檢查URLs是否在黑名單中
+- 顯著降低對已知危險URL的反應時間，從秒級降至毫秒級
+- 跳過審核隊列，立即刪除含有黑名單URL的消息並通知用戶
+- 同時支持原始消息和編輯消息的即時檢查
+- 更詳細資訊請查看 [URL黑名單即時檢查優化文檔](docs/updates/url_blacklist_speedup.md)
+
 ## 功能概述
 
 ### 聊天與互動
@@ -171,6 +183,8 @@ python main.py
 - [URL黑名單系統](docs/url_blacklist.md)
 - [短網址黑名單增強](docs/updates/shortened_url_blacklist_update.md)
 - [文化感知審核](docs/updates/culture_aware_moderation.md)
+- [URL黑名單即時檢查優化](docs/updates/url_blacklist_speedup.md)
+- [Bug修復記錄](docs/updates/bug_fixes.md)
 
 ### 貢獻
 歡迎提交 Issues 和 Pull Requests。請確保您的代碼符合項目的風格指南和質量標準。
