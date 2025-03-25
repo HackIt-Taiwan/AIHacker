@@ -93,6 +93,13 @@
 - 移除黑名單檢查機制，改為完全依賴 OpenAI 的審核 API 和 LLM 審核
 - 更詳細資訊請查看 [內容審核系統更新文檔](docs/updates/moderation_system_update.md)
 
+### URL安全檢查消息刪除優化 (2024-03-27)
+- 修復因Discord API速率限制導致的消息刪除失敗問題
+- 實現指數退避重試機制，提高消息刪除成功率
+- 在消息處理最早階段即時檢查黑名單URLs，不需等待審核隊列
+- 使用安全刪除機制確保危險URLs被可靠地刪除
+- 更詳細資訊請查看 [URL刪除優化文檔](docs/updates/url_delete_retry.md)
+
 ### Bug修復：頻道處理錯誤 (2024-03-27)
 - 修復因缺少`IGNORED_CHANNELS`定義而導致的消息處理錯誤
 - 確保機器人能正常處理所有頻道的消息
@@ -104,6 +111,19 @@
 - 跳過審核隊列，立即刪除含有黑名單URL的消息並通知用戶
 - 同時支持原始消息和編輯消息的即時檢查
 - 更詳細資訊請查看 [URL黑名單即時檢查優化文檔](docs/updates/url_blacklist_speedup.md)
+
+## 黑名單URL懲罰系統增強 (2024-03-27)
+
+- **新功能**: 完善黑名單URL檢測的懲罰機制，使用戶發送危險連結時將接受與違規內容相同的處理
+- **增強**: 統一違規處理流程，黑名單URL檢測將記錄違規歷史並可能導致禁言
+- **增強**: 向用戶發送詳細DM通知，說明刪除原因、違規類型和違規計數
+- **查看詳情**: [黑名單URL懲罰系統更新](docs/updates/blacklist_punishment.md)
+
+## PartialMessage刪除錯誤修復 (2024-03-27)
+
+- **問題修復**: 解決在處理編輯過的消息時`PartialMessage.delete()`不接受reason參數的錯誤
+- **增強**: 優化消息刪除機制，能夠正確識別並處理不同類型的Discord消息對象
+- **查看詳情**: [PartialMessage刪除錯誤修復](docs/updates/partial_message_fix.md)
 
 ## 功能概述
 
@@ -185,6 +205,7 @@ python main.py
 - [文化感知審核](docs/updates/culture_aware_moderation.md)
 - [URL黑名單即時檢查優化](docs/updates/url_blacklist_speedup.md)
 - [Bug修復記錄](docs/updates/bug_fixes.md)
+- [URL安全檢查消息刪除優化](docs/updates/url_delete_retry.md)
 
 ### 貢獻
 歡迎提交 Issues 和 Pull Requests。請確保您的代碼符合項目的風格指南和質量標準。

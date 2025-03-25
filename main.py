@@ -89,6 +89,11 @@ VIOLATION_TRACKING_WINDOW = 300
 # 設置空的IGNORED_CHANNELS列表，表示不屏蔽任何頻道
 IGNORED_CHANNELS = []
 
+# 刪除消息相關配置
+DELETE_MESSAGE_MAX_RETRIES = 5
+DELETE_MESSAGE_BASE_DELAY = 1.0
+DELETE_MESSAGE_MAX_DELAY = 10.0
+
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
     current_time = time.time()
@@ -416,8 +421,15 @@ async def on_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return
-
-    # Process bot commands
+    
+    # 即時檢查URLs（在所有其他處理之前）
+    if URL_SAFETY_CHECK_ENABLED and not message.author.bot and message.content.strip():
+        detected = await check_urls_immediately(message)
+        if detected:
+            # 如果檢測到黑名單URL並已處理，則跳過後續處理
+            return
+    
+    # Process commands
     await bot.process_commands(message)
     
     # Check moderation 
@@ -431,6 +443,10 @@ async def on_message(message):
 
     # Ignore messages with command prefixes, regardless of case
     if message.content and message.content.lower().startswith(IGNORED_PREFIXES):
+        return
+
+    # Skip messages from ignored channels
+    if message.channel.id in IGNORED_CHANNELS:
         return
 
     # Check if message is in question channel
@@ -506,10 +522,6 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Error checking FAQ: {str(e)}")
 
-    # Skip the rest of the processing if it's a command
-    if message.content.startswith('!'):
-        return
-    
     # Check for mentions, but only if the message author is not a bot
     if not message.author.bot:
         for mention in message.mentions:
@@ -535,6 +547,13 @@ async def on_message_edit(before, after):
     # Ignore edits by the bot itself
     if after.author == bot.user:
         return
+    
+    # 即時檢查URLs（在所有其他處理之前）
+    if URL_SAFETY_CHECK_ENABLED and not after.author.bot and after.content.strip():
+        detected = await check_urls_immediately(after)
+        if detected:
+            # 如果檢測到黑名單URL並已處理，則跳過後續處理
+            return
     
     # If content moderation is enabled, moderate the edited message
     if CONTENT_MODERATION_ENABLED and (not after.author.bot):
@@ -717,10 +736,11 @@ async def crazy_talk(ctx, *, content: str):
 
     # 先刪除用戶的指令訊息（如果有權限的話）
     try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        # 如果沒有刪除訊息的權限，至少確保指令回應是私密的
-        await ctx.reply("我收到你的請求了！", ephemeral=True)
+        # 使用安全刪除機制
+        delete_success = await safe_delete_message(ctx.message, reason="刪除Crazy Talk指令消息")
+        if not delete_success:
+            # 如果刪除失敗，至少確保指令回應是私密的
+            await ctx.reply("我收到你的請求了！", ephemeral=True)
     except Exception as e:
         print(f"刪除訊息時發生錯誤: {str(e)}")
         await ctx.reply("我收到你的請求了！", ephemeral=True)
@@ -1271,8 +1291,12 @@ async def moderate_message(message, is_edit=False):
             try:
                 # 只有當審核結果確認為真正違規時才刪除消息，否則保留
                 if review_result is None or review_result["is_violation"]:
-                    await message.delete()
-                    print(f"[審核系統] 已刪除標記為違規的{action_type}消息，用戶: {author.name}")
+                    delete_success = await safe_delete_message(message, reason=f"內容審核：{', '.join(violation_categories)}")
+                    if delete_success:
+                        print(f"[審核系統] 已刪除標記為違規的{action_type}消息，用戶: {author.name}")
+                    else:
+                        print(f"[審核系統] 無法刪除標記為違規的{action_type}消息，用戶: {author.name}")
+                        # 即使刪除失敗，仍繼續其他處理流程（如禁言用戶）
                 else:
                     # 如果被判定為誤判，不刪除消息也不通知用戶
                     print(f"[審核系統] 消息被標記但審核確認為誤判，已保留。用戶: {author.name}")
@@ -1518,6 +1542,365 @@ async def moderate_message(message, is_edit=False):
     except Exception as e:
         print(f"Error in content moderation: {str(e)}")
         # Log the error but don't raise, to avoid interrupting normal bot operation
+
+async def safe_delete_message(message, reason=None):
+    """
+    安全地刪除消息，使用指數退避重試機制處理Discord的速率限制
+    
+    Args:
+        message: 要刪除的Discord消息
+        reason: 刪除原因（可選）
+    
+    Returns:
+        bool: 刪除成功返回True，失敗返回False
+    """
+    for attempt in range(1, DELETE_MESSAGE_MAX_RETRIES + 1):
+        try:
+            # 檢查是否為PartialMessage，它不支持reason參數
+            if isinstance(message, discord.PartialMessage) or message.__class__.__name__ == 'PartialMessage':
+                await message.delete()
+            else:
+                await message.delete(reason=reason)
+            
+            # 成功刪除
+            if attempt > 1:
+                logger.info(f"成功刪除消息，嘗試次數: {attempt}")
+            return True
+        except discord.errors.HTTPException as e:
+            if e.status == 429:  # 速率限制
+                retry_after = e.retry_after if hasattr(e, 'retry_after') else DELETE_MESSAGE_BASE_DELAY * (2 ** (attempt - 1))
+                retry_after = min(retry_after, DELETE_MESSAGE_MAX_DELAY)  # 設置上限
+                logger.warning(f"刪除消息時遇到速率限制，將在 {retry_after:.2f} 秒後重試 (嘗試 {attempt}/{DELETE_MESSAGE_MAX_RETRIES})")
+                await asyncio.sleep(retry_after)
+            elif e.status == 404:  # 消息不存在
+                logger.info(f"嘗試刪除不存在的消息")
+                return False
+            else:
+                logger.error(f"刪除消息時發生HTTP錯誤: {e}")
+                if attempt == DELETE_MESSAGE_MAX_RETRIES:
+                    return False
+                await asyncio.sleep(DELETE_MESSAGE_BASE_DELAY * (2 ** (attempt - 1)))
+        except discord.errors.Forbidden:
+            logger.error("缺少刪除消息的權限")
+            return False
+        except Exception as e:
+            logger.error(f"刪除消息時發生未知錯誤: {e}")
+            if attempt == DELETE_MESSAGE_MAX_RETRIES:
+                return False
+            await asyncio.sleep(DELETE_MESSAGE_BASE_DELAY * (2 ** (attempt - 1)))
+
+    # 如果所有重試都失敗
+    logger.error(f"在 {DELETE_MESSAGE_MAX_RETRIES} 次嘗試後仍無法刪除消息")
+    return False
+
+async def check_urls_immediately(message):
+    """
+    即時檢查消息中的URLs是否在黑名單中，如果是則立即刪除消息並進行處罰。
+    此檢查在任何其他處理之前執行，以確保危險URLs立即被刪除。
+    
+    Args:
+        message: Discord消息對象
+    
+    Returns:
+        bool: 如果檢測到黑名單URL並已處理，則返回True
+    """
+    # 跳過有審核豁免權限的用戶
+    if any(role.id in CONTENT_MODERATION_BYPASS_ROLES for role in message.author.roles):
+        return False
+        
+    try:
+        # 初始化URL安全檢查器
+        from app.ai.service.url_safety import URLSafetyChecker
+        url_checker = URLSafetyChecker()
+        
+        # 無需創建URL檢查器，如果黑名單功能未啟用
+        if not url_checker.blacklist_enabled or not url_checker.blacklist:
+            return False
+            
+        # 提取URLs
+        urls = await url_checker.extract_urls(message.content.strip())
+        if not urls:
+            return False
+            
+        # 只檢查URLs是否在黑名單中（即時檢查）
+        blacklisted_urls = []
+        blacklist_results = {}
+        
+        for url in urls:
+            blacklist_result = url_checker.blacklist.is_blacklisted(url)
+            if blacklist_result:
+                blacklisted_urls.append(url)
+                blacklist_results[url] = blacklist_result
+        
+        # 如果找到黑名單URLs，立即刪除消息
+        if blacklisted_urls:
+            logger.warning(f"URL黑名單即時檢查: 用戶 {message.author.name} 的消息中包含 {len(blacklisted_urls)}/{len(urls)} 個黑名單URL")
+            author = message.author
+            text = message.content.strip()
+            channel = message.channel
+            guild = message.guild
+            
+            # 使用安全刪除機制
+            delete_success = await safe_delete_message(
+                message, 
+                reason=f"黑名單URL: {', '.join(blacklisted_urls[:3])}" + ("..." if len(blacklisted_urls) > 3 else "")
+            )
+            
+            if not delete_success:
+                logger.error(f"無法刪除包含黑名單URL的消息，用戶: {message.author.name}")
+                return False
+                
+            logger.info(f"已刪除包含黑名單URL的消息，用戶: {message.author.name}")
+            
+            # 收集威脅類型
+            threat_types = set()
+            max_severity = 0
+            for url, result in blacklist_results.items():
+                if 'threat_types' in result:
+                    for threat in result['threat_types']:
+                        threat_types.add(threat)
+                # 記錄最高嚴重程度
+                severity = result.get('severity', 0)
+                max_severity = max(max_severity, severity)
+            
+            threat_text = ', '.join(threat_types) if threat_types else '不安全連結'
+            
+            # 創建URL檢查結果用於禁言系統
+            url_check_result = {
+                "is_unsafe": True,
+                "unsafe_urls": blacklisted_urls,
+                "threat_types": list(threat_types),
+                "severity": max_severity,
+                "results": blacklist_results
+            }
+            
+            # 創建違規類別列表
+            violation_categories = []
+            for threat_type in threat_types:
+                violation_category = threat_type.lower()  # 將PHISHING轉換為phishing等
+                if violation_category not in violation_categories:
+                    violation_categories.append(violation_category)
+            
+            # 檢查用戶是否最近已被懲罰
+            current_time = time.time()
+            user_id = author.id
+            is_recent_violator = False
+            
+            if user_id in tracked_violators:
+                expiry_time = tracked_violators[user_id]
+                if current_time < expiry_time:
+                    is_recent_violator = True
+                    logger.info(f"用戶 {author.name} 最近已被處罰，僅刪除消息而不重複處罰")
+                else:
+                    # 過期的跟蹤，從字典中刪除
+                    del tracked_violators[user_id]
+            
+            # 如果這是最近的違規者，刪除消息後直接返回
+            if is_recent_violator:
+                # 創建簡單警告嵌入消息
+                embed = discord.Embed(
+                    title="⚠️ 不安全連結警告",
+                    description=f"您的消息包含已知的不安全連結，已被自動刪除。",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="風險類型", value=threat_text, inline=False)
+                embed.add_field(name="提醒", value="請謹慎檢查連結安全性，避免分享可疑網址。", inline=False)
+                embed.set_footer(text="此訊息將在短時間後自動刪除")
+                
+                # 發送通知
+                try:
+                    temp_msg = await message.channel.send(
+                        content=f"{message.author.mention}",
+                        embed=embed,
+                        delete_after=CONTENT_MODERATION_NOTIFICATION_TIMEOUT
+                    )
+                except Exception as e:
+                    logger.error(f"發送通知消息失敗: {str(e)}")
+                
+                return True
+                
+            # 記錄此用戶為最近的違規者
+            tracked_violators[user_id] = current_time + VIOLATION_TRACKING_WINDOW
+            
+            # 應用禁言（如果已配置禁言管理器）
+            mute_success = False
+            mute_reason = ""
+            mute_embed = None
+            
+            if mute_manager:
+                try:
+                    # 創建審核結果
+                    moderation_results = {
+                        "url_safety": url_check_result
+                    }
+                    
+                    mute_success, mute_reason, mute_embed = await mute_manager.mute_user(
+                        user=author,
+                        violation_categories=violation_categories,
+                        content=text,
+                        details=moderation_results
+                    )
+                    logger.info(f"用戶 {author.name} 因黑名單URL禁言狀態: {mute_success}")
+                except Exception as mute_error:
+                    logger.error(f"禁言用戶 {author.name} 時出錯: {str(mute_error)}")
+            
+            # 同時創建並發送通知
+            try:
+                # 頻道通知嵌入
+                notification_embed = discord.Embed(
+                    title="⚠️ 內容審核通知",
+                    description=f"<@{author.id}> 您的訊息已被系統移除，因為它含有違反社群規範的內容。",
+                    color=discord.Color.red()
+                )
+                
+                # DM嵌入
+                dm_embed = discord.Embed(
+                    title="🛡️ 內容審核通知",
+                    description=f"您在 **{guild.name}** 發送的訊息因含有不安全連結而被移除。",
+                    color=discord.Color.from_rgb(230, 126, 34)  # 溫暖的橙色
+                )
+                
+                # 添加伺服器圖標（如果可用）
+                if guild.icon:
+                    dm_embed.set_thumbnail(url=guild.icon.url)
+                
+                dm_embed.timestamp = datetime.now(timezone.utc)
+                
+                # 添加URL安全信息
+                url_list = "\n".join([f"- {url}" for url in blacklisted_urls[:5]])  # 限制為5個URL
+                if len(blacklisted_urls) > 5:
+                    url_list += f"\n- ...以及 {len(blacklisted_urls) - 5} 個其他不安全連結"
+                    
+                threat_types_map = {
+                    'PHISHING': '釣魚網站',
+                    'MALWARE': '惡意軟體',
+                    'SCAM': '詐騙網站',
+                    'SUSPICIOUS': '可疑網站'
+                }
+                
+                threat_descriptions = []
+                for threat in threat_types:
+                    threat_descriptions.append(threat_types_map.get(threat, threat))
+                    
+                threat_text = "、".join(threat_descriptions) if threat_descriptions else "不安全連結"
+                
+                dm_embed.add_field(
+                    name="⚠️ 不安全連結",
+                    value=f"您的訊息包含可能是{threat_text}的連結：\n{url_list}",
+                    inline=False
+                )
+                
+                # 添加違規類型
+                if violation_categories:
+                    # 將類別映射到帶有表情符號的中文（斜線格式和下劃線格式）
+                    category_map = {
+                        # URL安全類別
+                        "phishing": "🎣 釣魚網站",
+                        "malware": "🦠 惡意軟體",
+                        "scam": "💸 詐騙內容",
+                        "suspicious": "❓ 可疑內容",
+                    }
+                    
+                    violation_list = []
+                    for category in violation_categories:
+                        category_text = category_map.get(category, f"❌ 違規內容: {category}")
+                        violation_list.append(category_text)
+                    
+                    dm_embed.add_field(
+                        name="違規類型",
+                        value="\n".join(violation_list),
+                        inline=False
+                    )
+                
+                # 添加頻道信息
+                dm_embed.add_field(
+                    name="📝 頻道",
+                    value=f"#{channel.name}",
+                    inline=True
+                )
+                
+                # 添加違規次數（如果可用）
+                if mute_manager:
+                    violation_count = mute_manager.db.get_violation_count(author.id, guild.id)
+                    dm_embed.add_field(
+                        name="🔢 違規次數",
+                        value=f"這是您的第 **{violation_count}** 次違規",
+                        inline=True
+                    )
+                
+                # 添加分隔線
+                dm_embed.add_field(
+                    name="",
+                    value="━━━━━━━━━━━━━━━━━━━━━━━",
+                    inline=False
+                )
+                
+                # 添加被標記的原始內容
+                if text:
+                    # 如果太長則截斷文本
+                    display_text = text if len(text) <= 1000 else text[:997] + "..."
+                    dm_embed.add_field(
+                        name="📄 訊息內容",
+                        value=f"```\n{display_text}\n```",
+                        inline=False
+                    )
+                
+                # 添加另一條分隔線
+                dm_embed.add_field(
+                    name="",
+                    value="━━━━━━━━━━━━━━━━━━━━━━━━",
+                    inline=False
+                )
+                
+                # 添加注意事項和資源
+                dm_embed.add_field(
+                    name="📋 請注意",
+                    value="請確保您發送的內容符合社群規範。重複違規可能導致更嚴重的處罰。\n\n如果您對此決定有疑問，請聯繫伺服器工作人員。",
+                    inline=False
+                )
+                
+                # 添加指南鏈接
+                dm_embed.add_field(
+                    name="📚 社群規範",
+                    value=f"請閱讀我們的[社群規範](https://discord.com/channels/{guild.id}/rules)以了解更多資訊。",
+                    inline=False
+                )
+                
+                # 同時發送兩條消息
+                tasks = []
+                tasks.append(channel.send(embed=notification_embed))
+                tasks.append(author.send(embed=dm_embed))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # 記錄任何DM錯誤
+                if len(results) > 1 and isinstance(results[1], Exception):
+                    logger.error(f"無法發送DM: {str(results[1])}")
+                
+                # 在內容審核通知後發送禁言通知
+                if mute_success and mute_embed:
+                    try:
+                        await author.send(embed=mute_embed)
+                    except Exception as e:
+                        logger.error(f"無法發送禁言通知DM: {str(e)}")
+
+                # 提取頻道通知以便刪除
+                if len(results) > 0 and isinstance(results[0], discord.Message):
+                    channel_notification = results[0]
+                    # 短暫延遲後刪除通知
+                    await asyncio.sleep(CONTENT_MODERATION_NOTIFICATION_TIMEOUT)
+                    await channel_notification.delete()
+                
+            except Exception as e:
+                logger.error(f"無法發送通知消息: {str(e)}")
+            
+            return True
+            
+        return False
+        
+    except Exception as e:
+        logger.error(f"URL黑名單即時檢查錯誤: {str(e)}")
+        return False
 
 def main():
     """Main entry point for the Discord bot"""
