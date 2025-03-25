@@ -115,6 +115,12 @@ URL_SAFETY_MAX_RETRIES = int(os.getenv('URL_SAFETY_MAX_RETRIES', '3'))
 URL_SAFETY_RETRY_DELAY = int(os.getenv('URL_SAFETY_RETRY_DELAY', '2'))  # Base delay in seconds (will use exponential backoff)
 URL_SAFETY_REQUEST_TIMEOUT = float(os.getenv('URL_SAFETY_REQUEST_TIMEOUT', '5.0'))  # Timeout in seconds
 
+# URL Unshortening Configuration
+URL_UNSHORTEN_ENABLED = os.getenv('URL_UNSHORTEN_ENABLED', 'True').lower() == 'true'
+URL_UNSHORTEN_TIMEOUT = float(os.getenv('URL_UNSHORTEN_TIMEOUT', '5.0'))  # Timeout in seconds
+URL_UNSHORTEN_MAX_REDIRECTS = int(os.getenv('URL_UNSHORTEN_MAX_REDIRECTS', '10'))
+URL_UNSHORTEN_RETRY_COUNT = int(os.getenv('URL_UNSHORTEN_RETRY_COUNT', '2'))
+
 # Known impersonation and phishing domains to explicitly block
 URL_SAFETY_IMPERSONATION_DOMAINS = [
     domain.strip() for domain in os.getenv(

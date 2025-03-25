@@ -20,8 +20,10 @@ from app.config import (
     URL_SAFETY_MAX_RETRIES,
     URL_SAFETY_RETRY_DELAY,
     URL_SAFETY_REQUEST_TIMEOUT,
-    URL_SAFETY_MAX_URLS
+    URL_SAFETY_MAX_URLS,
+    URL_UNSHORTEN_ENABLED
 )
+from app.ai.service.url_unshortener import URLUnshortener
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,18 @@ class URLSafetyChecker:
         self.retry_delay = URL_SAFETY_RETRY_DELAY
         self.request_timeout = URL_SAFETY_REQUEST_TIMEOUT
         
+        # Initialize URL unshortener
+        self.unshortener = URLUnshortener()
+        
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with cleanup."""
+        if hasattr(self, 'unshortener'):
+            self.unshortener.close()
+            
     async def extract_urls(self, text: str) -> List[str]:
         """
         Extract all URLs from text content.
@@ -109,13 +123,45 @@ class URLSafetyChecker:
         
         logger.info(f"Checking {len(urls_to_check)} URLs for safety")
         
+        # First, unshorten all URLs if URL unshortening is enabled
+        if URL_UNSHORTEN_ENABLED:
+            logger.info(f"Unshortening {len(urls_to_check)} URLs before safety check")
+            unshortened_urls = {}
+            unshortening_results = await self.unshortener.unshorten_urls(urls_to_check)
+            
+            # Map original URLs to their unshortened versions
+            for url in urls_to_check:
+                if url in unshortening_results:
+                    result = unshortening_results[url]
+                    if result["success"] and result["final_url"] != url:
+                        # URL was successfully unshortened
+                        unshortened_urls[url] = result["final_url"]
+                        logger.info(f"Unshortened URL: {url} -> {result['final_url']}")
+                    else:
+                        # Use original URL if unshortening failed or didn't change URL
+                        unshortened_urls[url] = url
+                else:
+                    unshortened_urls[url] = url
+        
         # Check safety for the selected URLs
-        for url in urls_to_check:
-            url_unsafe, result = await self.check_url(url)
-            results[url] = result
+        for original_url in urls_to_check:
+            # Use unshortened URL for safety check if available
+            url_to_check = unshortened_urls.get(original_url, original_url) if URL_UNSHORTEN_ENABLED else original_url
+            
+            # Check safety
+            url_unsafe, result = await self.check_url(url_to_check)
+            
+            # Add unshortening information to the result if applicable
+            if URL_UNSHORTEN_ENABLED and original_url in unshortened_urls and unshortened_urls[original_url] != original_url:
+                result["original_shortened_url"] = original_url
+                result["url"] = url_to_check  # Update to unshortened URL
+                
+            # Store result under the original URL
+            results[original_url] = result
+            
             if url_unsafe:
                 is_unsafe = True
-                logger.warning(f"URL {url} is unsafe")
+                logger.warning(f"URL {original_url} is unsafe")
         
         # If we did sampling and found nothing unsafe, note it in the log
         if sampling_applied and not is_unsafe:
