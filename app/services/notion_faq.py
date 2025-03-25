@@ -6,9 +6,9 @@ from notion_client import Client
 from app.config import NOTION_API_KEY, NOTION_FAQ_PAGE_ID
 
 class NotionFAQ:
-    def __init__(self):
-        self.client = Client(auth=NOTION_API_KEY)
-        self.faq_page_id = NOTION_FAQ_PAGE_ID
+    def __init__(self, api_key=None, page_id=None):
+        self.client = Client(auth=api_key or NOTION_API_KEY)
+        self.faq_page_id = page_id or NOTION_FAQ_PAGE_ID
         self._cache = None
         self._last_update = None
 

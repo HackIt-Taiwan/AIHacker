@@ -9,8 +9,6 @@ from pydantic_ai import Agent
 from app.ai.agents.crazy_talk import agent_crazy
 from app.ai.agents.classifier import agent_classifier
 from app.ai.agents.general import agent_general
-from app.ai.agents.reminder import agent_reminder
-from app.ai.agents.leave import agent_leave
 from app.ai.agents.faq import agent_faq
 from app.ai.agents.moderation_review import agent_moderation_review
 
@@ -75,18 +73,6 @@ async def create_general_agent() -> Agent:
     """Create a general agent for search responses."""
     model = get_primary_model()
     agent = await agent_general(model)
-    return agent
-
-async def create_reminder_agent() -> Agent:
-    """Create a reminder agent for handling reminders."""
-    model = get_primary_model()
-    agent = await agent_reminder(model)
-    return agent
-
-async def create_leave_agent() -> Agent:
-    """Create a leave agent for handling leave requests."""
-    model = get_primary_model()
-    agent = await agent_leave(model)
     return agent
 
 async def create_primary_agent():

@@ -26,8 +26,7 @@ from app.config import (
     IGNORED_PREFIXES, RANDOM_REPLY_CHANCE, STREAM_UPDATE_INTERVAL, 
     STREAM_MIN_UPDATE_LENGTH, STREAM_UPDATE_CHARS, CHAT_HISTORY_TARGET_CHARS,
     CHAT_HISTORY_MAX_MESSAGES, AI_MAX_RETRIES, AI_RETRY_DELAY, AI_ERROR_MESSAGE,
-    SPLIT_CHARS, REMINDER_CHECK_INTERVAL, LEAVE_ALLOWED_ROLES,
-    LEAVE_ANNOUNCEMENT_CHANNEL_IDS, INVITE_TIME_ZONE, INVITE_ALLOWED_ROLES,
+    SPLIT_CHARS, INVITE_TIME_ZONE, INVITE_ALLOWED_ROLES,
     INVITE_LIST_PAGE_SIZE, INVITE_LIST_MAX_PAGES, QUESTION_CHANNEL_ID, 
     QUESTION_RESOLVER_ROLES, QUESTION_EMOJI, QUESTION_RESOLVED_EMOJI,
     QUESTION_FAQ_FOUND_EMOJI, QUESTION_FAQ_PENDING_EMOJI, CRAZY_TALK_ALLOWED_USERS,
@@ -36,22 +35,32 @@ from app.config import (
     CONTENT_MODERATION_NOTIFICATION_TIMEOUT, MUTE_ROLE_NAME, MUTE_ROLE_ID,
     MODERATION_REVIEW_ENABLED, MODERATION_REVIEW_CONTEXT_MESSAGES,
     MODERATION_QUEUE_ENABLED, MODERATION_QUEUE_MAX_CONCURRENT,
-    DB_ROOT, REMINDER_DB_PATH, WELCOMED_MEMBERS_DB_PATH, LEAVE_DB_PATH, INVITE_DB_PATH, QUESTION_DB_PATH,
+    DB_ROOT, WELCOMED_MEMBERS_DB_PATH, INVITE_DB_PATH, QUESTION_DB_PATH,
     HISTORY_PROMPT_TEMPLATE, RANDOM_PROMPT_TEMPLATE, NO_HISTORY_PROMPT_TEMPLATE,
     URL_SAFETY_CHECK_ENABLED
 )
 from app.ai_handler import AIHandler
 from pydantic import ValidationError
-from app.reminder_manager import ReminderManager
 from app.welcomed_members_db import WelcomedMembersDB
-from app.leave_manager import LeaveManager
-from app.ai.agents.leave import agent_leave
 from app.invite_manager import InviteManager
 from app.question_manager import QuestionManager, QuestionView, FAQResponseView
 from app.mute_manager import MuteManager
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+# Set up logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/discord_bot.log', encoding='utf-8', mode='a'),
+        logging.StreamHandler()
+    ]
+)
+
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
 
 # Initialize bot with all intents
 intents = discord.Intents.default()
@@ -64,10 +73,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 message_timestamps: Dict[int, List[float]] = defaultdict(list)
 
 # Global variables
-reminder_manager = None
 ai_handler = None
 welcomed_members_db = None
-leave_manager = None
 invite_manager = None
 notion_faq = None
 mute_manager = None  # Added for mute management
@@ -128,117 +135,82 @@ def split_message(text: str) -> List[str]:
 
 @bot.event
 async def on_ready():
-    print(f'Bot is ready. Logged in as {bot.user} (ID: {bot.user.id})')
-    print('------')
+    """Called when the client is done preparing the data received from Discord."""
+    # Create a prominent login notification with detailed information
+    login_message = f"""
+==========================================================
+                BOT LOGIN SUCCESSFUL
+==========================================================
+Bot Name: {bot.user.name}
+Bot ID: {bot.user.id}
+Server Count: {len(bot.guilds)}
+Login Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+==========================================================
+"""
+    # Log the login message
+    logger.info(login_message)
+    print(login_message)
     
-    # Set bot activity
-    activity = discord.Activity(type=discord.ActivityType.watching, name=BOT_ACTIVITY)
-    await bot.change_presence(activity=activity)
+    # Set bot status
+    if BOT_ACTIVITY:
+        await bot.change_presence(activity=discord.Game(name=BOT_ACTIVITY))
     
-    # Create command tree for slash commands
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+    # Start background tasks
+    global ai_handler, welcomed_members_db, invite_manager, notion_faq, mute_manager, question_manager
     
-    # Get guild list
-    guilds = bot.guilds
-    for guild in guilds:
-        print(f"Connected to guild: {guild.name} (ID: {guild.id})")
-        
-    # Print number of members in cache
-    member_count = sum(len(guild.members) for guild in guilds)
-    print(f"Total members in cache: {member_count}")
-    
-    # Initialize question manager and register existing buttons
-    global question_manager
-    from app.question_manager import QuestionManager, QuestionView, FAQResponseView
-    question_manager = QuestionManager()
-    
-    # Add generic question view for handling existing buttons
-    # these views will handle interactions from existing messages
-    bot.add_view(QuestionView())  # Add generic view for handling existing buttons
-    bot.add_view(FAQResponseView())  # Add generic FAQ response view without parameters
-    
-    # Get all questions from the database and add persistent views for them
-    try:
-        questions = question_manager.get_all_questions_with_state()
-        if questions:
-            count = 0
-            for question in questions:
-                # Skip resolved questions
-                if question.get('is_resolved'):
-                    continue
-                
-                # Register question resolution buttons
-                view = QuestionView.create_for_question(question['id'])
-                bot.add_view(view)
-                
-                # Register FAQ response buttons if applicable
-                if question.get('has_faq'):
-                    faq_view = FAQResponseView(question['id'])
-                    bot.add_view(faq_view)
-                count += 1
-            print(f"Registered buttons for {count} active questions")
-    except Exception as e:
-        print(f"Failed to register question buttons: {e}")
-    
-    # Initialize MuteManager
-    global mute_manager
-    from app.mute_manager import MuteManager
-    mute_manager = MuteManager(bot, MUTE_ROLE_NAME or "Muted")
-    
-    # Initialize other managers
-    global reminder_manager, ai_handler, welcomed_members_db, leave_manager, invite_manager
-    
-    # Initialize AI handler
-    from app.ai_handler import AIHandler
-    ai_handler = AIHandler()
-    
-    # Initialize welcomed members database
+    # Load welcomed members database
     from app.welcomed_members_db import WelcomedMembersDB
     welcomed_members_db = WelcomedMembersDB()
-    
-    # Initialize reminder manager
-    from app.reminder_manager import ReminderManager
-    reminder_manager = ReminderManager(bot)
-    
-    # Initialize leave manager
-    from app.leave_manager import LeaveManager
-    leave_manager = LeaveManager()
     
     # Initialize invite manager
     from app.invite_manager import InviteManager
     invite_manager = InviteManager()
     
-    # Initialize Notion FAQ integration if enabled
-    if NOTION_FAQ_CHECK_ENABLED:
+    # Initialize AI handler
+    from app.ai_handler import AIHandler
+    ai_handler = AIHandler(bot=bot)
+    
+    # Initialize question manager if question channel is set
+    if QUESTION_CHANNEL_ID:
+        from app.question_manager import QuestionManager
+        question_manager = QuestionManager(bot)
+    
+    # Initialize Notion FAQ service if enabled
+    if NOTION_FAQ_CHECK_ENABLED and NOTION_API_KEY and NOTION_FAQ_PAGE_ID:
         from app.services.notion_faq import NotionFAQ
-        global notion_faq
-        notion_faq = NotionFAQ()
+        notion_faq = NotionFAQ(NOTION_API_KEY, NOTION_FAQ_PAGE_ID)
+        bot.loop.create_task(check_auto_resolve_faqs())
     
-    # Load moderation commands
-    try:
-        from app.moderation.mod_commands import setup
-        await setup(bot)
-        print("Moderation commands loaded successfully")
-    except Exception as e:
-        print(f"Failed to load moderation commands: {e}")
+    # Initialize mute manager
+    from app.mute_manager import MuteManager
+    mute_manager = MuteManager(bot)
     
-    # Start background tasks
-    bot.loop.create_task(reminder_manager.check_reminders())
-    bot.loop.create_task(check_auto_resolve_faqs())
+    # Check for expired mutes
     bot.loop.create_task(check_expired_mutes())
+    
+    # Start the moderation queue if enabled
+    if MODERATION_QUEUE_ENABLED:
+        from app.services.moderation_queue import start_moderation_queue
+        await start_moderation_queue(bot)
+    
+    # Create necessary directories if they don't exist
+    os.makedirs(DB_ROOT, exist_ok=True)
+    
+    # Initialize the retry welcome messages task
     bot.loop.create_task(retry_welcome_messages())
     
-    # Initialize moderation queue if enabled
-    if MODERATION_QUEUE_ENABLED:
-        from app.services.moderation_queue import moderation_queue
-        bot.loop.create_task(moderation_queue.start())
-        print(f"Moderation queue started with max concurrent tasks: {MODERATION_QUEUE_MAX_CONCURRENT}")
-        
-    print("Bot is fully initialized and ready!")
+    # Log successful initialization of all components
+    ready_message = f"""
+==========================================================
+                BOT INITIALIZATION COMPLETE
+==========================================================
+All components initialized successfully
+Bot is ready to handle events
+Servers connected: {len(bot.guilds)}
+==========================================================
+"""
+    logger.info(ready_message)
+    print(ready_message)
 
 async def send_welcome_to_offline_members(last_online):
     print("Checking for members who joined while bot was offline...")
@@ -575,19 +547,18 @@ async def on_message_edit(before, after):
         await handle_mention(after)
 
 async def handle_mention(message):
-    """Handle when bot is mentioned"""
-    print(f"Checking rate limit for user {message.author.id}")
-    if not check_rate_limit(message.author.id):
-        await message.reply(RATE_LIMIT_ERROR)
+    """Handle user mentions to the bot"""
+    # Get the content after the bot mention
+    # Skip processing if message is too short
+    if len(message.content) < MIN_MESSAGE_LENGTH:
         return
-
-    # Remove the bot mention and get the actual message
-    content = message.content.replace(f'<@{bot.user.id}>', '').strip()
-    if not content:
-        await message.reply("Hello! How can I help you today?")
-        return
-
-    await handle_ai_response(message, content)
+    
+    # Apply ignored prefixes check
+    for prefix in IGNORED_PREFIXES:
+        if message.content.startswith(f"<@{bot.user.id}> {prefix}"):
+            return
+    
+    await handle_ai_response(message)
 
 async def handle_ai_response(message, content=None, is_random=False):
     """Handle AI response generation and sending"""
@@ -1546,52 +1517,20 @@ async def moderate_message(message, is_edit=False):
         # Log the error but don't raise, to avoid interrupting normal bot operation
 
 def main():
-    """Main function to run the Discord bot"""
-    # Setup logging with UTF-8 encoding for file handler
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler("discord_bot.log", encoding='utf-8'),
-            # Use StreamHandler with encoding or set sys.stdout encoding
-        ]
-    )
-    
-    # Configure console handler separately with error handling for encoding issues
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    
-    # Add a filter to handle encoding errors for console output
-    class EncodingFilter(logging.Filter):
-        def filter(self, record):
-            try:
-                # Try to format the record, catching encoding errors
-                record.getMessage()
-                return True
-            except UnicodeEncodeError:
-                # If there's an encoding error, replace problematic characters
-                record.msg = record.msg.encode('cp1252', errors='replace').decode('cp1252')
-                record.args = tuple(
-                    arg.encode('cp1252', errors='replace').decode('cp1252') 
-                    if isinstance(arg, str) else arg 
-                    for arg in record.args
-                )
-                return True
-    
-    console_handler.addFilter(EncodingFilter())
-    logging.getLogger().addHandler(console_handler)
-    
-    # Ensure database directories exist
-    os.makedirs(os.path.join(DB_ROOT, 'questions'), exist_ok=True)
-    os.makedirs(os.path.join(DB_ROOT, 'welcomed_members'), exist_ok=True)
-    os.makedirs(os.path.join(DB_ROOT, 'invites'), exist_ok=True)
-    os.makedirs(os.path.join(DB_ROOT, 'leaves'), exist_ok=True)
-    os.makedirs(os.path.join(DB_ROOT, 'reminders'), exist_ok=True)
-    os.makedirs(os.path.join(DB_ROOT, 'mutes'), exist_ok=True)
-    
-    # Run the bot
-    bot.run(DISCORD_TOKEN)
+    """Main entry point for the Discord bot"""
+    try:
+        # Ensure required directories exist
+        os.makedirs(DB_ROOT, exist_ok=True)
+        os.makedirs(os.path.join(DB_ROOT, 'questions'), exist_ok=True)
+        os.makedirs(os.path.join(DB_ROOT, 'welcomed_members'), exist_ok=True)
+        os.makedirs(os.path.join(DB_ROOT, 'invites'), exist_ok=True)
+        
+        # Start the bot
+        bot.run(DISCORD_TOKEN, log_handler=None)
+    except Exception as e:
+        logger.critical(f"Failed to start the bot: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

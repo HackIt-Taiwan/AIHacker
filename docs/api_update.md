@@ -108,4 +108,42 @@ result = await review_flagged_content(
 2. 添加適當的錯誤處理和重試機制
 3. 監控審核結果，收集用戶反饋以協助我們改進系統
 
-如有任何問題或遇到異常情況，請立即聯繫技術支持團隊。 
+如有任何問題或遇到異常情況，請立即聯繫技術支持團隊。
+
+## 新的更新 (2024-06-24)
+
+### 提醒和請假功能移除
+
+移除了以下與提醒和請假相關的功能：
+
+#### 已刪除的 API 模式
+
+以下 AI 命令模式已被刪除，並將不再被處理：
+
+```
+[REMINDER]...[/REMINDER]            # 設置提醒
+[LIST_REMINDERS]...[/LIST_REMINDERS] # 列出提醒
+[DELETE_REMINDER]...[/DELETE_REMINDER] # 刪除提醒
+[LEAVE]...[/LEAVE]                  # 請假申請
+[LEAVE_LIST]...[/LEAVE_LIST]        # 列出請假
+[LEAVE_DELETE]...[/LEAVE_DELETE]    # 刪除請假
+```
+
+#### 已移除的環境變數
+
+```
+REMINDER_CHECK_INTERVAL=60          # 提醒檢查間隔(秒)
+LEAVE_ALLOWED_ROLES=role_id1,role_id2 # 允許請假的角色
+LEAVE_ANNOUNCEMENT_CHANNEL_IDS=channel_id1,channel_id2 # 請假公告頻道
+```
+
+#### 已刪除的資料庫
+
+```
+data/reminders.db                   # 提醒資料庫
+data/leaves.db                      # 請假資料庫
+```
+
+#### 遷移指南
+
+不再支援提醒和請假功能。用戶需要使用替代的系統來管理提醒和請假。 

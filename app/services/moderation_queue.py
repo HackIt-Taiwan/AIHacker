@@ -183,3 +183,14 @@ class ModerationQueue:
 
 # Create a global instance of the moderation queue
 moderation_queue = ModerationQueue() 
+
+async def start_moderation_queue(bot=None):
+    """
+    Start the global moderation queue instance.
+    
+    Args:
+        bot: Optional Discord bot instance
+    """
+    logger.info("Starting global moderation queue service")
+    await moderation_queue.start()
+    return moderation_queue 

@@ -240,7 +240,9 @@ class QuestionView(View):
         return view
 
 class QuestionManager:
-    def __init__(self):
+    def __init__(self, bot=None):
+        # Store bot instance
+        self.bot = bot
         # Ensure database directory exists
         os.makedirs(os.path.dirname(QUESTION_DB_PATH), exist_ok=True)
         self._ensure_db()

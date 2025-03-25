@@ -2,6 +2,64 @@
 
 ## 最近更新
 
+### URL安全檢查系統新增隨機抽樣功能 (2024-07-30)
+- 當用戶一次發送超過設定數量的連結時，系統只會隨機抽查部分連結
+- 新增 URL_SAFETY_MAX_URLS 環境變數，用於設定最大檢查數量
+- 優化處理效率，減少 API 請求次數
+- 更詳細資訊請查看 [URL安全檢查抽樣功能文檔](docs/updates/url_safety_sampling.md)
+
+### URL安全檢查系統簡化 (2024-07-29)
+- 移除短網址擴展功能，降低系統複雜度
+- 移除自定義威脅檢測邏輯，專注於 VirusTotal API 整合
+- 提高整體效能和可靠性
+- 更詳細資訊請查看 [URL安全系統簡化文檔](docs/updates/url_safety_simplification.md)
+
+### URL安全檢查系統優化：進階威脅偵測 (2024-07-28)
+- 增加頁面內容啟發式分析，有效偵測釣魚網站和欺詐頁面
+- 實現可疑域名識別，檢測潛在惡意網域
+- 整合 URL 參數分析，發現隱藏在參數中的威脅
+- 強化短網址處理機制，對未成功展開的短網址進行特殊處理
+- 建立多層威脅評分系統，提供詳細的威脅情報
+- 更詳細資訊請查看 [URL安全進階威脅偵測文檔](docs/updates/url_safety_enhancement_v3.md)
+
+### URL安全檢查系統優化：本地遞迴網址展開 (2024-07-27)
+- 實現了本地遞迴URL展開系統，不再依賴外部API
+- 能夠偵測並有效處理各類URL短網址，包括shorturl.at和reurl.cc
+- 支援多層次重定向的追蹤，包含HTTP重定向、meta刷新和JavaScript重定向
+- 增強對特定URL短網址服務的模式檢測
+- 新增訪問過的URL追蹤以防止重定向循環
+- 更詳細資訊請查看 [URL安全本地展開增強文檔](docs/updates/url_safety_enhancement_v2.md)
+
+### URL安全檢查完全重寫 (2024-07-25)
+- 完全重寫 URL 安全檢查系統，大幅提升短網址偵測和追蹤能力
+- 實現更高效的短網址解析和多重重定向追蹤
+- 提升對域名偽裝和可疑路徑的檢測能力
+- 實現並行處理多個 URL 的檢查，提高效率
+- 更詳細資訊請查看 [URL安全模組增強文檔](docs/updates/url_safety_enhancement.md)
+
+### URL安全檢查改進 - 重定向處理 (2024-07-11)
+- 增強短網址和重定向URL的安全性檢查功能
+- 使用GET請求代替HEAD請求，更有效地跟踪URL重定向
+- 添加對Meta refresh重定向的檢測和跟踪
+- 改進相對URL路徑的處理
+- 更詳細資訊請查看 [URL重定向處理改進文檔](docs/updates/url_safety_improvements_redirects.md)
+
+### 登入通知系統優化 (2024-06-26)
+- 增強機器人登入和初始化完成通知的可見性
+- 改進日誌系統配置，確保所有日誌都正確記錄
+- 自動創建日誌目錄並使用 UTF-8 編碼
+- 更詳細資訊請查看 [登入通知改進文檔](docs/updates/login_notification_enhancement.md)
+
+### 修復異步生成器語法和類初始化問題 (2024-06-25)
+- 修復 `ai_handler.py` 中的異步生成器語法錯誤
+- 修復 `QuestionManager` 和 `NotionFAQ` 類的初始化參數不匹配問題
+- 修復 `moderation_queue.py` 中缺少的內容審核隊列啟動函數
+- 更詳細資訊請查看 [修復文檔](docs/updates/async_generator_fix.md)
+
+### 移除提醒與請假功能 (2024-06-24)
+- 移除提醒和請假相關功能以簡化系統
+- 更詳細資訊請查看 [功能移除文檔](docs/updates/remove_reminder_leave.md)
+
 ### 超時功能更新：使用 Discord 內建禁言功能 (2024-06-20)
 - 更新為使用 Discord 內建的超時功能替代角色禁言
 - 新增 `/timeout` 和 `/remove_timeout` 命令
@@ -26,7 +84,7 @@
 ### 社區管理
 - 歡迎新成員：自動歡迎加入伺服器的新成員
 - 內容審核：自動檢測並處理不適當的內容
-- URL 安全檢查：檢測並攔截不安全的網址
+- URL 安全檢查：檢測並攔截不安全的網址，包括高效短網址追蹤和多重重定向檢查
 - 使用者超時：使用 Discord 內建超時功能禁言使用者
 - 違規處理：根據違規程度自動管理用戶禁言時間
 
@@ -60,8 +118,6 @@ python main.py
 
 ### 基本指令
 - `!help` - 顯示幫助信息
-- `!remind` - 設置提醒
-- `!leave` - 請假管理
 - `!crazy` - Crazy Talk 風格回答（僅限工作人員）
 
 ### 工作人員指令
@@ -198,7 +254,7 @@ HackIt Discord Bot 支援使用 OpenAI 的 omni-moderation-latest 模型進行�
 - 向使用者發送通知（頻道臨時消息和私信）
 - 分級禁言機制（5分鐘/12小時/7天/7天/28天）
 - 支援角色豁免機制
-- URL 安全檢查（檢測釣魚、詐騙和惡意軟體連結）
+- URL 安全檢查（檢測釣魚、詐騙和惡意連結，包括短網址和重定向）
 - 完全依賴 AI 判斷，無預設白名單或黑名單
 
 [查看詳細文檔](docs/content_moderation.md)
@@ -218,17 +274,7 @@ HackIt Discord Bot 支援使用 OpenAI 的 omni-moderation-latest 模型進行�
 - 審核隊列系統，自動排隊處理大量消息，避免因API負載限制而漏審
 - URL 安全檢查，使用 VirusTotal 或 Google Safe Browsing API 識別並阻止惡意連結的分享
 
-[查看增強版審核功能文檔](docs/enhanced_moderation.md) | [查看社群規範](docs/community_guidelines.md) | [最新更新: 違規類別對應](docs/updates/category_mapping_update.md) | [系統修復](docs/updates/moderation_fixes.md) | [審核複查系統](docs/updates/moderation_review.md) | [誤判處理優化](docs/updates/moderation_improvements.md) | [審核隊列系統](docs/updates/moderation_queue.md) | [URL 安全檢查](docs/updates/url_safety_check.md) | [URL安全檢查修復](docs/updates/url_safety_bug_fixes.md) | [圖片審核改進](docs/updates/image_moderation_improvements.md) | [日誌系統修復](docs/updates/logging_fixes.md) | [通知機制優化](docs/updates/moderation_update.md) | [文化感知審核](docs/updates/culture_aware_moderation.md) | [審核標準放寬](docs/updates/relaxed_moderation_policy.md) | [移除預設白名單](docs/updates/direct_ai_judgment.md) | [永久禁言修復](docs/updates/permanent_ban_fix.md)
-
-### 安全功能
-
-- **內容審核**：使用AI自動檢測並刪除有害訊息，包括仇恨言論、垃圾訊息和不適當內容。
-- **連結安全檢查**：自動檢測並阻止釣魚和惡意URL，包括短網址重定向和仿冒域名(如Steam, Discord等流行平台的仿冒)。
-- **自動禁言**：對於多次發送有害內容的用戶自動實施禁言。
-- **隱私保護**：頻道通知僅顯示基本信息，詳細審核結果只發送到私訊，同時發送以提高效率。
-- **文化感知審核**：支援台灣口語表達方式，避免誇張表達如「想死」、「笑死」等被誤判為違規。
-- **寬鬆審核標準**：採用更寬鬆的審核標準，只對確實嚴重的違規內容採取行動。
-- **完全AI判斷**：移除預設白名單機制，完全依賴AI進行審核判斷，提高系統公平性和準確性。
+[查看增強版審核功能文檔](docs/enhanced_moderation.md) | [查看社群規範](docs/community_guidelines.md) | [最新更新: 違規類別對應](docs/updates/category_mapping_update.md) | [系統修復](docs/updates/moderation_fixes.md) | [審核複查系統](docs/updates/moderation_review.md) | [誤判處理優化](docs/updates/moderation_improvements.md) | [審核隊列系統](docs/updates/moderation_queue.md) | [URL 安全檢查](docs/updates/url_safety_check.md) | [URL安全檢查修復](docs/updates/url_safety_bug_fixes.md) | [URL重定向處理改進](docs/updates/url_safety_improvements_redirects.md) | [圖片審核改進](docs/updates/image_moderation_improvements.md) | [日誌系統修復](docs/updates/logging_fixes.md) | [通知機制優化](docs/updates/moderation_update.md) | [文化感知審核](docs/updates/culture_aware_moderation.md) | [審核標準放寬](docs/updates/relaxed_moderation_policy.md) | [移除預設白名單](docs/updates/direct_ai_judgment.md) | [永久禁言修復](docs/updates/permanent_ban_fix.md)
 
 ## 安全與審核
 
@@ -237,3 +283,11 @@ HackIt Discord Bot 支援使用 OpenAI 的 omni-moderation-latest 模型進行�
 - [審核標準放寬](docs/updates/relaxed_moderation_policy.md) - 更寬鬆的內容審核政策
 - [禁言時間修改](docs/updates/mute_duration_update.md) - 更新的違規禁言時間
 - [審核通知簡化](docs/updates/simplified_moderation_notification.md) - 簡化審核結果的通知格式 
+
+### 機器人指令
+- `!crazy [內容]` - 調用無限制的回應模式
+
+### 權限配置
+- 邀請創建權限：設置 `INVITE_ALLOWED_ROLES`
+- 問題解決權限：設置 `QUESTION_RESOLVER_ROLES`
+- 審核豁免：設置 `CONTENT_MODERATION_BYPASS_ROLES` 

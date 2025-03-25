@@ -70,18 +70,9 @@ SPLIT_CHARS = os.getenv('SPLIT_CHARS', '\n\n,\n,。,！,？,.,!,?, ').split(',')
 
 # Database Paths
 DB_ROOT = os.getenv('DB_ROOT', 'data')  # Root directory for all database files
-REMINDER_DB_PATH = os.path.join(DB_ROOT, os.getenv('REMINDER_DB_NAME', 'reminders.db'))
 WELCOMED_MEMBERS_DB_PATH = os.path.join(DB_ROOT, os.getenv('WELCOMED_MEMBERS_DB_NAME', 'welcomed_members.db'))
-LEAVE_DB_PATH = os.path.join(DB_ROOT, os.getenv('LEAVE_DB_NAME', 'leaves.db'))
 INVITE_DB_PATH = os.path.join(DB_ROOT, os.getenv('INVITE_DB_NAME', 'invites.db'))
 QUESTION_DB_PATH = os.path.join(DB_ROOT, os.getenv('QUESTION_DB_NAME', 'questions.db'))
-
-# Reminder Configuration
-REMINDER_CHECK_INTERVAL = int(os.getenv('REMINDER_CHECK_INTERVAL', '60'))  # Check interval in seconds
-
-# Leave Configuration
-LEAVE_ALLOWED_ROLES = [int(id.strip()) for id in os.getenv('LEAVE_ALLOWED_ROLES', '').split(',') if id.strip()]  # Roles allowed to use leave commands
-LEAVE_ANNOUNCEMENT_CHANNEL_IDS = [int(id.strip()) for id in os.getenv('LEAVE_ANNOUNCEMENT_CHANNEL_IDS', '').split(',') if id.strip()]  # Leave announcement channel IDs
 
 # Invite Configuration
 INVITE_TIME_ZONE = os.getenv('INVITE_TIME_ZONE', 'Asia/Taipei')  # Timezone setting
@@ -117,6 +108,7 @@ URL_SAFETY_CHECK_ENABLED = os.getenv('URL_SAFETY_CHECK_ENABLED', 'False').lower(
 URL_SAFETY_CHECK_API = os.getenv('URL_SAFETY_CHECK_API', 'virustotal')  # virustotal or googlesafe
 URL_SAFETY_API_KEY = os.getenv('URL_SAFETY_API_KEY', '')
 URL_SAFETY_THRESHOLD = float(os.getenv('URL_SAFETY_THRESHOLD', '0.3'))  # 30% score threshold for unsafe
+URL_SAFETY_MAX_URLS = int(os.getenv('URL_SAFETY_MAX_URLS', '5'))  # Maximum URLs to check at once
 
 # URL safety check retry settings
 URL_SAFETY_MAX_RETRIES = int(os.getenv('URL_SAFETY_MAX_RETRIES', '3'))
@@ -159,8 +151,7 @@ MODERATION_QUEUE_MAX_RETRIES = int(os.getenv('MODERATION_QUEUE_MAX_RETRIES', '5'
 MESSAGE_TYPES = {
     'SEARCH': 'search',      # Requires information search
     'CHAT': 'chat',         # General chat
-    'REMINDER': 'reminder', # Set reminder
-    'LEAVE': 'leave',       # Leave related
+    'GENERAL': 'general',   # General message
     'UNKNOWN': 'unknown'    # Cannot classify
 }
 
