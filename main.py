@@ -94,6 +94,9 @@ DELETE_MESSAGE_MAX_RETRIES = 5
 DELETE_MESSAGE_BASE_DELAY = 1.0
 DELETE_MESSAGE_MAX_DELAY = 10.0
 
+# 追蹤警告顯示時間（避免短時間內多次顯示警告）
+warning_times = {}
+
 def check_rate_limit(user_id: int) -> bool:
     """Check if user has exceeded rate limit"""
     current_time = time.time()
@@ -157,7 +160,6 @@ Login Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
     # Log the login message
     logger.info(login_message)
-    print(login_message)
     
     # Set bot status
     if BOT_ACTIVITY:
@@ -189,18 +191,6 @@ Login Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         notion_faq = NotionFAQ(NOTION_API_KEY, NOTION_FAQ_PAGE_ID)
         bot.loop.create_task(check_auto_resolve_faqs())
     
-    # Initialize mute manager
-    from app.mute_manager import MuteManager
-    mute_manager = MuteManager(bot)
-    
-    # Check for expired mutes
-    bot.loop.create_task(check_expired_mutes())
-    
-    # Start the moderation queue if enabled
-    if MODERATION_QUEUE_ENABLED:
-        from app.services.moderation_queue import start_moderation_queue
-        await start_moderation_queue(bot)
-    
     # Create necessary directories if they don't exist
     os.makedirs(DB_ROOT, exist_ok=True)
     
@@ -218,16 +208,34 @@ Servers connected: {len(bot.guilds)}
 ==========================================================
 """
     logger.info(ready_message)
-    print(ready_message)
+
+    # logger.info("Sending welcome to offline members")
+    # await send_welcome_to_offline_members(datetime.now(timezone.utc) - timedelta(days=1))
+    # logger.info("Welcome to offline members sent")
+
+    # Initialize mute manager
+    from app.mute_manager import MuteManager
+    mute_manager = MuteManager(bot)
+    
+    # Check for expired mutes
+    bot.loop.create_task(check_expired_mutes())
+
+    # Start the moderation queue if enabled
+    if MODERATION_QUEUE_ENABLED:
+        from app.services.moderation_queue import start_moderation_queue
+        await start_moderation_queue(bot)
+    
+
 
 async def send_welcome_to_offline_members(last_online):
-    print("Checking for members who joined while bot was offline...")
+    logger.info("Sending welcome to offline members")
     for guild in bot.guilds:
         async for member in guild.fetch_members():
+            logger.info(f"Checking member: {member}")
             if not member.bot and member.joined_at and member.joined_at > last_online:
                 # check not welcomed
                 if not welcomed_members_db.get_member_join_count(member.id, guild.id) > 0:
-                    print(f"Sending welcome to {member} who joined at {member.joined_at}")
+                    logger.info(f"Sending welcome to {member} who joined at {member.joined_at}")
                     await send_welcome(member)
 
 # 新增成員加入事件處理
@@ -242,7 +250,7 @@ async def send_welcome(member: discord.Member):
     global ai_handler, welcomed_members_db
     if ai_handler is None:
         print("初始化 AI handler")
-        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
+        ai_handler = AIHandler(bot)
     
     if welcomed_members_db is None:
         print("初始化歡迎資料庫")
@@ -523,14 +531,6 @@ async def on_message(message):
                     print(f"Error checking FAQ: {str(e)}")
 
     # Check for mentions, but only if the message author is not a bot
-    if not message.author.bot:
-        for mention in message.mentions:
-            # 檢查被提及的用戶是否正在請假
-            leave_info = leave_manager.get_active_leave(mention.id, message.guild.id)
-            if leave_info:
-                await ai_handler.handle_mention_of_leave_user(message, mention, leave_info)
-                continue
-
     # Check if the bot was mentioned
     if bot.user in message.mentions:
         await handle_mention(message)
@@ -780,7 +780,7 @@ async def crazy_talk(ctx, *, content: str):
     global ai_handler
     if ai_handler is None:
         print("Initializing AI handler")
-        ai_handler = AIHandler(reminder_manager, leave_manager, bot)
+        ai_handler = AIHandler(bot)
     
     try:
         async with ctx.typing():
@@ -1681,11 +1681,13 @@ async def check_urls_immediately(message):
                 if violation_category not in violation_categories:
                     violation_categories.append(violation_category)
             
-            # 檢查用戶是否最近已被懲罰
+            # 檢查用戶是否最近已被懲罰以及是否最近已顯示過警告
             current_time = time.time()
             user_id = author.id
             is_recent_violator = False
+            warning_shown = False
             
+            # 檢查用戶是否最近違規
             if user_id in tracked_violators:
                 expiry_time = tracked_violators[user_id]
                 if current_time < expiry_time:
@@ -1695,8 +1697,18 @@ async def check_urls_immediately(message):
                     # 過期的跟蹤，從字典中刪除
                     del tracked_violators[user_id]
             
-            # 如果這是最近的違規者，刪除消息後直接返回
-            if is_recent_violator:
+            # 檢查用戶是否最近已顯示過警告
+            if user_id in warning_times:
+                warning_expiry = warning_times[user_id]
+                if current_time < warning_expiry:
+                    warning_shown = True
+                    logger.info(f"用戶 {author.name} 最近已收到警告，不再重複顯示")
+                else:
+                    # 過期的警告時間，從字典中刪除
+                    del warning_times[user_id]
+            
+            # 如果是最近的違規者但還未顯示過警告，顯示一個簡單的警告
+            if is_recent_violator and not warning_shown:
                 # 創建簡單警告嵌入消息
                 embed = discord.Embed(
                     title="⚠️ 不安全連結警告",
@@ -1714,13 +1726,20 @@ async def check_urls_immediately(message):
                         embed=embed,
                         delete_after=CONTENT_MODERATION_NOTIFICATION_TIMEOUT
                     )
+                    # 記錄警告時間，設置警告冷卻時間為30秒
+                    warning_times[user_id] = current_time + 30.0
                 except Exception as e:
                     logger.error(f"發送通知消息失敗: {str(e)}")
                 
                 return True
+            elif is_recent_violator and warning_shown:
+                # 如果是最近違規者且已顯示過警告，僅刪除消息不顯示任何提醒
+                return True
                 
             # 記錄此用戶為最近的違規者
             tracked_violators[user_id] = current_time + VIOLATION_TRACKING_WINDOW
+            # 記錄已顯示警告
+            warning_times[user_id] = current_time + 30.0
             
             # 應用禁言（如果已配置禁言管理器）
             mute_success = False

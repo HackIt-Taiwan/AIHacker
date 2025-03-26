@@ -37,12 +37,12 @@ class AIHandler:
     def _clean_response(self, response: str) -> str:
         """Clean up the AI response for formatting and remove any special instructions."""
         # Remove any command patterns 
-        response = re.sub(r'\[REMINDER\].*?\[/REMINDER\]', '', response, flags=re.DOTALL)
-        response = re.sub(r'\[LIST_REMINDERS\]\s*\[/LIST_REMINDERS\]', '', response, flags=re.DOTALL)
-        response = re.sub(r'\[DELETE_REMINDER\].*?\[/DELETE_REMINDER\]', '', response, flags=re.DOTALL)
-        response = re.sub(r'\[LEAVE\].*?\[/LEAVE\]', '', response, flags=re.DOTALL)
-        response = re.sub(r'\[LEAVE_LIST\]\s*\[/LEAVE_LIST\]', '', response, flags=re.DOTALL)
-        response = re.sub(r'\[LEAVE_DELETE\].*?\[/LEAVE_DELETE\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[REMINDER\].*?\[/REMINDER\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[LIST_REMINDERS\]\s*\[/LIST_REMINDERS\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[DELETE_REMINDER\].*?\[/DELETE_REMINDER\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[LEAVE\].*?\[/LEAVE\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[LEAVE_LIST\]\s*\[/LEAVE_LIST\]', '', response, flags=re.DOTALL)
+        # response = re.sub(r'\[LEAVE_DELETE\].*?\[/LEAVE_DELETE\]', '', response, flags=re.DOTALL)
         
         # Clean up any remaining artifacts
         return response.strip()
@@ -55,22 +55,40 @@ class AIHandler:
         await self._ensure_services()
         
         # Classify the message
-        message_type = self._classifier.classify_message(message)
+        message_type = await self._classifier.classify_message(message)
         
         response_buffer = ""
         
         if message_type == MESSAGE_TYPES['GENERAL']:
             # Handle general message
-            async for chunk in self._general_agent.generate_stream(message, context):
-                response_buffer += chunk
-                yield chunk
+            agent = self._general_agent
+            print("Using general agent")
         else:
             # Handle crazy talk
-            async for chunk in self._crazy_agent.generate_stream(message, context):
-                response_buffer += chunk
-                yield chunk
+            agent = self._crazy_agent
+            print("Using crazy agent")
         
-        # Clean the response for internal use - but don't return it
-        # Just store it if needed elsewhere
-        self.last_cleaned_response = self._clean_response(response_buffer)
-        # Instead of returning, we just end the generator
+        response_buffer = ""
+        try:
+            for attempt in range(AI_MAX_RETRIES):
+                try:
+                    async with agent.run_stream(message) as result:
+                        async for chunk in result.stream_text(delta=True):
+                            response_buffer += chunk
+                            # 清理回應中的命令標記
+                            cleaned_chunk = self._clean_response(chunk)
+                            if cleaned_chunk:
+                                yield cleaned_chunk
+                    return
+                    
+                except Exception as e:
+                    if attempt == AI_MAX_RETRIES - 1:
+                        print(f"AI response failed after {AI_MAX_RETRIES} attempts: {str(e)}")
+                        yield f"抱歉，AI 服務暫時無法回應，請稍後再試。"
+                        return
+                    print(f"AI response attempt {attempt + 1} failed: {str(e)}")
+                    await asyncio.sleep(AI_RETRY_DELAY)
+
+        except Exception as e:
+            print(f"處理訊息時發生錯誤：{str(e)}")
+            yield f"抱歉，AI 服務暫時無法回應，請稍後再試。"
