@@ -106,32 +106,34 @@ class URLBlacklist:
         Returns:
             A dict with metadata if the URL is blacklisted, empty dict otherwise
         """
-        with self.lock:
-            # First check exact URL match
-            if url in self.blacklist:
-                logger.info(f"URL found in blacklist: {url}")
-                return self.blacklist[url]
+        # 去除不必要的鎖，因為我們已經在主函數中批量處理
+        # 使用快速路徑檢查
+        
+        # First check exact URL match (最快的路徑)
+        if url in self.blacklist:
+            logger.info(f"URL found in blacklist: {url}")
+            return self.blacklist[url]
+        
+        # Then check if it's a shortened URL we've seen before (第二快的路徑)
+        if url in self.shortened_urls_map:
+            expanded_url = self.shortened_urls_map[url]
+            if expanded_url in self.blacklist:
+                logger.info(f"Shortened URL found in blacklist: {url} -> {expanded_url}")
+                result = self.blacklist[expanded_url].copy()
+                result['original_shortened_url'] = url
+                result['expanded_url'] = expanded_url
+                return result
+        
+        # Then check domain match (if enabled)
+        try:
+            domain = urlparse(url).netloc.lower()
+            if domain and domain in self.domains_blacklist:
+                logger.info(f"Domain found in blacklist: {domain} (URL: {url})")
+                return self.domains_blacklist[domain]
+        except Exception as e:
+            logger.warning(f"Error parsing domain from URL {url}: {str(e)}")
             
-            # Then check if it's a shortened URL we've seen before
-            if url in self.shortened_urls_map:
-                expanded_url = self.shortened_urls_map[url]
-                if expanded_url in self.blacklist:
-                    logger.info(f"Shortened URL found in blacklist: {url} -> {expanded_url}")
-                    result = self.blacklist[expanded_url].copy()
-                    result['original_shortened_url'] = url
-                    result['expanded_url'] = expanded_url
-                    return result
-            
-            # Then check domain match (if enabled)
-            try:
-                domain = urlparse(url).netloc.lower()
-                if domain and domain in self.domains_blacklist:
-                    logger.info(f"Domain found in blacklist: {domain} (URL: {url})")
-                    return self.domains_blacklist[domain]
-            except Exception as e:
-                logger.warning(f"Error parsing domain from URL {url}: {str(e)}")
-                
-            return {}
+        return {}
     
     def add_url(self, url: str, metadata: Dict) -> None:
         """

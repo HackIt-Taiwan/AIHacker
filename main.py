@@ -90,7 +90,7 @@ VIOLATION_TRACKING_WINDOW = 300
 IGNORED_CHANNELS = []
 
 # 刪除消息相關配置
-DELETE_MESSAGE_MAX_RETRIES = 5
+DELETE_MESSAGE_MAX_RETRIES = 15
 DELETE_MESSAGE_BASE_DELAY = 1.0
 DELETE_MESSAGE_MAX_DELAY = 10.0
 
@@ -180,17 +180,45 @@ Login Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     from app.ai_handler import AIHandler
     ai_handler = AIHandler(bot=bot)
     
-    # Initialize question manager if question channel is set
-    if QUESTION_CHANNEL_ID:
-        from app.question_manager import QuestionManager
-        question_manager = QuestionManager(bot)
+    # Initialize question manager and register existing buttons
+    global question_manager
+    from app.question_manager import QuestionManager, QuestionView, FAQResponseView
+    question_manager = QuestionManager()
     
-    # Initialize Notion FAQ service if enabled
-    if NOTION_FAQ_CHECK_ENABLED and NOTION_API_KEY and NOTION_FAQ_PAGE_ID:
+    # Add generic question view for handling existing buttons
+    # these views will handle interactions from existing messages
+    bot.add_view(QuestionView())  # Add generic view for handling existing buttons
+    bot.add_view(FAQResponseView())  # Add generic FAQ response view without parameters
+    
+    # Get all questions from the database and add persistent views for them
+    try:
+        questions = question_manager.get_all_questions_with_state()
+        if questions:
+            count = 0
+            for question in questions:
+                # Skip resolved questions
+                if question.get('is_resolved'):
+                    continue
+                
+                # Register question resolution buttons
+                view = QuestionView.create_for_question(question['id'])
+                bot.add_view(view)
+                
+                # Register FAQ response buttons if applicable
+                if question.get('has_faq'):
+                    faq_view = FAQResponseView(question['id'])
+                    bot.add_view(faq_view)
+                count += 1
+            print(f"Registered buttons for {count} active questions")
+    except Exception as e:
+        print(f"Failed to register question buttons: {e}")
+    
+    # Initialize Notion FAQ integration if enabled
+    if NOTION_FAQ_CHECK_ENABLED:
         from app.services.notion_faq import NotionFAQ
-        notion_faq = NotionFAQ(NOTION_API_KEY, NOTION_FAQ_PAGE_ID)
-        bot.loop.create_task(check_auto_resolve_faqs())
-    
+        global notion_faq
+        notion_faq = NotionFAQ()
+
     # Create necessary directories if they don't exist
     os.makedirs(DB_ROOT, exist_ok=True)
     
@@ -1626,31 +1654,27 @@ async def check_urls_immediately(message):
         blacklisted_urls = []
         blacklist_results = {}
         
-        for url in urls:
-            blacklist_result = url_checker.blacklist.is_blacklisted(url)
-            if blacklist_result:
-                blacklisted_urls.append(url)
-                blacklist_results[url] = blacklist_result
+        # 優化：批量檢查URL（減少鎖競爭）
+        with url_checker.blacklist.lock:
+            for url in urls:
+                blacklist_result = url_checker.blacklist.is_blacklisted(url)
+                if blacklist_result:
+                    blacklisted_urls.append(url)
+                    blacklist_results[url] = blacklist_result
         
         # 如果找到黑名單URLs，立即刪除消息
         if blacklisted_urls:
+            # 優先刪除消息，再處理其他任務
+            delete_task = asyncio.create_task(safe_delete_message(
+                message, 
+                reason=f"黑名單URL: {', '.join(blacklisted_urls[:3])}" + ("..." if len(blacklisted_urls) > 3 else "")
+            ))
+            
             logger.warning(f"URL黑名單即時檢查: 用戶 {message.author.name} 的消息中包含 {len(blacklisted_urls)}/{len(urls)} 個黑名單URL")
             author = message.author
             text = message.content.strip()
             channel = message.channel
             guild = message.guild
-            
-            # 使用安全刪除機制
-            delete_success = await safe_delete_message(
-                message, 
-                reason=f"黑名單URL: {', '.join(blacklisted_urls[:3])}" + ("..." if len(blacklisted_urls) > 3 else "")
-            )
-            
-            if not delete_success:
-                logger.error(f"無法刪除包含黑名單URL的消息，用戶: {message.author.name}")
-                return False
-                
-            logger.info(f"已刪除包含黑名單URL的消息，用戶: {message.author.name}")
             
             # 收集威脅類型
             threat_types = set()
@@ -1706,6 +1730,15 @@ async def check_urls_immediately(message):
                 else:
                     # 過期的警告時間，從字典中刪除
                     del warning_times[user_id]
+            
+            # 等待刪除任務完成
+            delete_success = await delete_task
+            
+            if not delete_success:
+                logger.error(f"無法刪除包含黑名單URL的消息，用戶: {message.author.name}")
+                # 即使刪除失敗，仍繼續處理通知和懲罰
+            else:
+                logger.info(f"已成功刪除包含黑名單URL的消息，用戶: {message.author.name}")
             
             # 如果是最近的違規者但還未顯示過警告，顯示一個簡單的警告
             if is_recent_violator and not warning_shown:

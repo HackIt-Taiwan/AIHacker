@@ -116,7 +116,7 @@ class URLSafetyChecker:
         blacklisted_urls = []
         urls_to_check = []
         
-        # First, check against the blacklist if enabled
+        # First, check against the blacklist if enabled (優化黑名單檢查)
         if self.blacklist_enabled and self.blacklist:
             for url in urls:
                 blacklist_result = self.blacklist.is_blacklisted(url)
@@ -140,6 +140,11 @@ class URLSafetyChecker:
                 else:
                     # URL is not in the blacklist, will need to check it
                     urls_to_check.append(url)
+                    
+            # 如果已經發現黑名單URL，立即返回結果，不需要進一步檢查
+            if is_unsafe and blacklisted_urls:
+                logger.info(f"提前返回黑名單檢查結果：發現 {len(blacklisted_urls)} 個黑名單URL")
+                return True, results
         else:
             # Blacklist not enabled, check all URLs
             urls_to_check = urls
