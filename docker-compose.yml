@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aihacker-discord-bot
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Taipei
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, signal; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s 

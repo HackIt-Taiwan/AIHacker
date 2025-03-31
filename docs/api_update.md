@@ -146,4 +146,71 @@ data/leaves.db                      # 請假資料庫
 
 #### 遷移指南
 
-不再支援提醒和請假功能。用戶需要使用替代的系統來管理提醒和請假。 
+不再支援提醒和請假功能。用戶需要使用替代的系統來管理提醒和請假。
+
+## Docker 部署支援 (2024-03-31)
+
+### 概述
+
+AIHacker Discord Bot 現在支援 Docker 容器化部署，透過 Docker 和 Docker Compose 可以輕鬆在任何支援 Docker 的平台上運行機器人。
+
+### 主要檔案
+
+- `Dockerfile` - 定義了如何構建 Docker 映像
+- `docker-compose.yml` - 定義了如何運行容器和管理依賴
+- `.dockerignore` - 指定哪些檔案不包含在 Docker 構建上下文中
+
+### 使用方法
+
+#### 基本部署
+
+```bash
+# 複製環境變數範例檔案
+cp .env.example .env
+
+# 編輯 .env 檔案，填入必要的設定值
+nano .env
+
+# 使用 Docker Compose 啟動服務
+docker-compose up -d
+```
+
+#### 檢視日誌
+
+```bash
+# 查看即時日誌
+docker-compose logs -f
+```
+
+#### 更新服務
+
+```bash
+# 拉取最新代碼
+git pull
+
+# 重建並重啟容器
+docker-compose down
+docker-compose up -d --build
+```
+
+### 資料持久化
+
+為確保資料持久性，Docker 設定將以下目錄映射為卷：
+
+- `./data:/app/data` - 存儲資料庫檔案
+- `./logs:/app/logs` - 存儲日誌檔案
+- `./.env:/app/.env` - 環境設定檔案
+
+### 安全性考慮
+
+Docker 容器使用非特權使用者 `botuser` 執行應用程式，遵循最佳實踐以增強安全性。
+
+### 進階設定
+
+可通過編輯 `docker-compose.yml` 檔案調整以下設定：
+
+- 時區設定 (`TZ=Asia/Taipei`)
+- 重啟策略 (`restart: unless-stopped`)
+- 健康檢查參數
+
+詳細的部署說明請參考 [Docker 部署指南](docker_deployment.md)。 

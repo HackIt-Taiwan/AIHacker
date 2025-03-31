@@ -2,6 +2,13 @@
 
 ## 最近更新
 
+### Docker 支援 (2024-03-31)
+- 新增 Docker 容器化部署支援，可在任何支援 Docker 的環境中輕鬆部署
+- 提供 Docker Compose 配置，簡化部署和管理流程
+- 實現資料持久化，確保資料庫和日誌的安全保存
+- 支援自動重啟和健康檢查，提高服務可靠性
+- 更詳細資訊請查看 [Docker 支援更新文檔](docs/updates/docker_support.md)
+
 ### URL黑名單檢查和危險URL刪除優化 (2025-03-26)
 - 顯著提高URL黑名單檢查的處理速度和效率
 - 通過提前返回機制，快速識別黑名單URLs並立即處理
@@ -252,6 +259,20 @@ python main.py
 3. 複製 `.env.example` 到 `.env` 並填寫必要的配置
 4. 設置 Notion FAQ（參見 `docs/notion_faq_setup.md`）
 5. 運行機器人：`python main.py`
+
+## Docker 部署
+
+AIHacker Discord Bot 也支援 Docker 部署，方便在各種環境中快速部署和運行。
+
+### 使用 Docker Compose
+
+1. 複製 `.env.example` 到 `.env` 並填寫必要的配置
+2. 使用 Docker Compose 啟動：
+   ```bash
+   docker-compose up -d
+   ```
+
+詳細的 Docker 部署說明請查看 [Docker 部署指南](docs/docker_deployment.md)
 
 ## 配置說明
 
