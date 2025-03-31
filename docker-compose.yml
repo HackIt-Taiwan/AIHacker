@@ -9,10 +9,91 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./.env:/app/.env
+      # Mount .env file for local development (can be commented out in production)
+      # - ./.env:/app/.env
     restart: unless-stopped
     environment:
       - TZ=Asia/Taipei
+      # Environment variables can be defined here for cloud environments
+      # Discord Configuration
+      # - DISCORD_TOKEN=${DISCORD_TOKEN}
+      
+      # Welcome Channel Configuration
+      # - WELCOME_CHANNEL_IDS=${WELCOME_CHANNEL_IDS}
+      
+      # Primary AI Model Configuration
+      # - PRIMARY_AI_SERVICE=${PRIMARY_AI_SERVICE}
+      # - PRIMARY_MODEL=${PRIMARY_MODEL}
+      
+      # Classifier AI Model Configuration
+      # - CLASSIFIER_AI_SERVICE=${CLASSIFIER_AI_SERVICE}
+      # - CLASSIFIER_MODEL=${CLASSIFIER_MODEL}
+      
+      # Azure OpenAI Configuration
+      # - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      # - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      # - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
+      
+      # Google Gemini Configuration
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+      
+      # Tavily Search Configuration
+      # - TAVILY_API_KEY=${TAVILY_API_KEY}
+      # - TAVILY_SEARCH_MAX_RESULTS=${TAVILY_SEARCH_MAX_RESULTS}
+      
+      # Development Settings
+      # - DEBUG=${DEBUG}
+      # - LOG_LEVEL=${LOG_LEVEL}
+      
+      # Invite Configuration
+      # - INVITE_ALLOWED_ROLES=${INVITE_ALLOWED_ROLES}
+      # - INVITE_LIST_PAGE_SIZE=${INVITE_LIST_PAGE_SIZE}
+      # - INVITE_LIST_MAX_PAGES=${INVITE_LIST_MAX_PAGES}
+      
+      # Crazy Talk Configuration
+      # - CRAZY_TALK_ALLOWED_USERS=${CRAZY_TALK_ALLOWED_USERS}
+      
+      # Notion FAQ Configuration
+      # - NOTION_API_KEY=${NOTION_API_KEY}
+      # - NOTION_FAQ_PAGE_ID=${NOTION_FAQ_PAGE_ID}
+      # - NOTION_FAQ_CHECK_ENABLED=${NOTION_FAQ_CHECK_ENABLED}
+      
+      # Content Moderation Configuration
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - CONTENT_MODERATION_ENABLED=${CONTENT_MODERATION_ENABLED}
+      # - CONTENT_MODERATION_NOTIFICATION_TIMEOUT=${CONTENT_MODERATION_NOTIFICATION_TIMEOUT}
+      # - CONTENT_MODERATION_BYPASS_ROLES=${CONTENT_MODERATION_BYPASS_ROLES}
+      # - MUTE_ROLE_NAME=${MUTE_ROLE_NAME}
+      # - MUTE_ROLE_ID=${MUTE_ROLE_ID}
+      
+      # Moderation Review Configuration
+      # - MODERATION_REVIEW_ENABLED=${MODERATION_REVIEW_ENABLED}
+      # - MODERATION_REVIEW_AI_SERVICE=${MODERATION_REVIEW_AI_SERVICE}
+      # - MODERATION_REVIEW_MODEL=${MODERATION_REVIEW_MODEL}
+      # - BACKUP_MODERATION_REVIEW_AI_SERVICE=${BACKUP_MODERATION_REVIEW_AI_SERVICE}
+      # - BACKUP_MODERATION_REVIEW_MODEL=${BACKUP_MODERATION_REVIEW_MODEL}
+      # - MODERATION_REVIEW_CONTEXT_MESSAGES=${MODERATION_REVIEW_CONTEXT_MESSAGES}
+      
+      # Moderation Queue Configuration
+      # - MODERATION_QUEUE_ENABLED=${MODERATION_QUEUE_ENABLED}
+      # - MODERATION_QUEUE_MAX_CONCURRENT=${MODERATION_QUEUE_MAX_CONCURRENT}
+      # - MODERATION_QUEUE_CHECK_INTERVAL=${MODERATION_QUEUE_CHECK_INTERVAL}
+      # - MODERATION_QUEUE_RETRY_INTERVAL=${MODERATION_QUEUE_RETRY_INTERVAL}
+      # - MODERATION_QUEUE_MAX_RETRIES=${MODERATION_QUEUE_MAX_RETRIES}
+      
+      # URL Safety Check Configuration
+      # - URL_SAFETY_CHECK_ENABLED=${URL_SAFETY_CHECK_ENABLED}
+      # - URL_SAFETY_CHECK_API=${URL_SAFETY_CHECK_API}
+      # - URL_SAFETY_API_KEY=${URL_SAFETY_API_KEY}
+      # - URL_SAFETY_THRESHOLD=${URL_SAFETY_THRESHOLD}
+      # - URL_SAFETY_MAX_RETRIES=${URL_SAFETY_MAX_RETRIES}
+      # - URL_SAFETY_RETRY_DELAY=${URL_SAFETY_RETRY_DELAY}
+      # - URL_SAFETY_REQUEST_TIMEOUT=${URL_SAFETY_REQUEST_TIMEOUT}
+      # - URL_SAFETY_IMPERSONATION_DOMAINS=${URL_SAFETY_IMPERSONATION_DOMAINS}
+      
+    env_file:
+      # Use env_file directive for local development, comment out in production if using cloud secrets
+      - ./.env
     healthcheck:
       test: ["CMD", "python", "-c", "import os, signal; os.kill(1, 0)"]
       interval: 30s

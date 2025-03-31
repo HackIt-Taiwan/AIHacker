@@ -264,13 +264,21 @@ python main.py
 
 AIHacker Discord Bot 也支援 Docker 部署，方便在各種環境中快速部署和運行。
 
-### 使用 Docker Compose
+### 本地開發環境
 
 1. 複製 `.env.example` 到 `.env` 並填寫必要的配置
 2. 使用 Docker Compose 啟動：
    ```bash
    docker-compose up -d
    ```
+
+### 雲端環境
+
+雲端環境部署建議直接使用環境變數或雲平台的密鑰管理系統：
+
+1. 修改 `docker-compose.yml` 檔案，註釋掉 `.env` 掛載和 `env_file` 配置
+2. 使用雲平台提供的環境變數設置機制配置必要變數
+3. 部署容器，確保資料卷正確配置
 
 詳細的 Docker 部署說明請查看 [Docker 部署指南](docs/docker_deployment.md)
 

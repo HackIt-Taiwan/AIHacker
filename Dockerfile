@@ -36,6 +36,13 @@ RUN mkdir -p /app/data /app/logs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+# Set default config values (these will be overridden by environment variables if provided)
+ENV PRIMARY_AI_SERVICE=azureopenai
+ENV PRIMARY_MODEL=gpt-4o
+ENV CLASSIFIER_AI_SERVICE=gemini
+ENV CLASSIFIER_MODEL=gemini-1.0-pro
+ENV CONTENT_MODERATION_ENABLED=True
+ENV URL_SAFETY_CHECK_ENABLED=True
 
 # Command to run when the container starts
 CMD ["python", "main.py"] 
