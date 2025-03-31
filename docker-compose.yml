@@ -9,12 +9,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      # Mount .env file for local development (can be commented out in production)
-      # - ./.env:/app/.env
     restart: unless-stopped
     environment:
       - TZ=Asia/Taipei
-      # Environment variables can be defined here for cloud environments
+      # All environment variables below are commented out
+      # as they will be provided by Coolify directly to the container
       # Discord Configuration
       # - DISCORD_TOKEN=${DISCORD_TOKEN}
       
@@ -90,10 +89,7 @@ services:
       # - URL_SAFETY_RETRY_DELAY=${URL_SAFETY_RETRY_DELAY}
       # - URL_SAFETY_REQUEST_TIMEOUT=${URL_SAFETY_REQUEST_TIMEOUT}
       # - URL_SAFETY_IMPERSONATION_DOMAINS=${URL_SAFETY_IMPERSONATION_DOMAINS}
-      
-    env_file:
-      # Use env_file directive for local development, comment out in production if using cloud secrets
-      - ./.env
+    # The env_file directive is removed for Coolify compatibility
     healthcheck:
       test: ["CMD", "python", "-c", "import os, signal; os.kill(1, 0)"]
       interval: 30s

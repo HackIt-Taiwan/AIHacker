@@ -262,7 +262,7 @@ python main.py
 
 ## Docker 部署
 
-AIHacker Discord Bot 也支援 Docker 部署，方便在各種環境中快速部署和運行。
+AIHacker Discord Bot 支援多種容器化部署方式，適用於不同的環境需求。
 
 ### 本地開發環境
 
@@ -280,7 +280,17 @@ AIHacker Discord Bot 也支援 Docker 部署，方便在各種環境中快速部
 2. 使用雲平台提供的環境變數設置機制配置必要變數
 3. 部署容器，確保資料卷正確配置
 
-詳細的 Docker 部署說明請查看 [Docker 部署指南](docs/docker_deployment.md)
+### Coolify 平台
+
+AIHacker Discord Bot 已針對 Coolify 平台進行優化：
+
+1. 使用 Coolify 界面設置所有必要的環境變數
+2. 配置持久化卷映射以保存資料和日誌
+3. 使用 Dockerfile 部署方法（不使用 Docker Compose）
+
+詳細的部署說明請查看：
+- [Docker 部署指南](docs/docker_deployment.md)
+- [Coolify 部署指南](docs/coolify_deployment.md)
 
 ## 配置說明
 

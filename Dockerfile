@@ -34,6 +34,10 @@ USER botuser
 # Create data and logs directories if they don't exist
 RUN mkdir -p /app/data /app/logs
 
+# Modify app/config.py to prioritize environment variables
+# This ensures .env file is not required
+RUN sed -i 's/load_dotenv()/load_dotenv(override=False)/' /app/config.py
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 # Set default config values (these will be overridden by environment variables if provided)
@@ -43,6 +47,19 @@ ENV CLASSIFIER_AI_SERVICE=gemini
 ENV CLASSIFIER_MODEL=gemini-1.0-pro
 ENV CONTENT_MODERATION_ENABLED=True
 ENV URL_SAFETY_CHECK_ENABLED=True
+ENV DB_ROOT=/app/data
+ENV LOG_LEVEL=INFO
+
+# Print environment variables on startup for debugging
+COPY <<-"EOF" /app/entrypoint.sh
+#!/bin/bash
+echo "Starting AIHacker Discord Bot..."
+echo "Environment variables loaded successfully"
+mkdir -p /app/data /app/logs
+python main.py
+EOF
+
+RUN chmod +x /app/entrypoint.sh
 
 # Command to run when the container starts
-CMD ["python", "main.py"] 
+CMD ["/app/entrypoint.sh"] 
